@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Oracle HCM Position Lookup</title>
+  <title>Oracle Access Request Lookup</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -24,7 +24,7 @@
       box-shadow: 0 4px 24px rgba(0,0,0,0.08);
       padding: 2.5rem;
       width: 100%;
-      max-width: 520px;
+      max-width: 700px;
     }
 
     .card-header {
@@ -201,6 +201,78 @@
     .error-msg { line-height: 1.5; }
     .error-icon { font-size: 1rem; margin-right: 0.35rem; }
 
+    .rules-section {
+      margin-top: 0.9rem;
+      border-top: 1px solid rgba(22,101,52,0.15);
+      padding-top: 0.9rem;
+    }
+
+    .rules-label {
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #166534;
+      opacity: 0.7;
+      margin-bottom: 0.6rem;
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+
+    .rules-count {
+      background: rgba(22,101,52,0.12);
+      border-radius: 99px;
+      padding: 0.05rem 0.45rem;
+      font-size: 0.68rem;
+    }
+
+    .rules-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.8rem;
+    }
+
+    .rules-table th {
+      text-align: left;
+      padding: 0.3rem 0.5rem;
+      font-weight: 600;
+      font-size: 0.7rem;
+      opacity: 0.6;
+      border-bottom: 1px solid rgba(22,101,52,0.2);
+    }
+
+    .rules-table td {
+      padding: 0.4rem 0.5rem;
+      border-bottom: 1px solid rgba(22,101,52,0.08);
+      vertical-align: top;
+      word-break: break-word;
+    }
+
+    .rules-table tr:last-child td { border-bottom: none; }
+
+    .rules-table .mono {
+      font-family: "SF Mono", "Fira Code", monospace;
+      font-size: 0.75rem;
+    }
+
+    .no-rules {
+      font-size: 0.82rem;
+      opacity: 0.6;
+      font-style: italic;
+    }
+
+    .rules-error {
+      font-size: 0.8rem;
+      color: #92400e;
+      background: #fffbeb;
+      border: 1px solid #fcd34d;
+      border-radius: 6px;
+      padding: 0.5rem 0.75rem;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
     .note {
       margin-top: 1.5rem;
       font-size: 0.75rem;
@@ -208,7 +280,106 @@
       line-height: 1.5;
       text-align: center;
     }
-  </style>
+
+    .section-divider {
+      border: none;
+      border-top: 1.5px solid #e5e7eb;
+      margin: 1.75rem 0 1.5rem;
+    }
+
+    /* ── Cost center multi-result table ───────────────────────────────────── */
+    .cc-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.82rem;
+    }
+
+    .cc-table th {
+      text-align: left;
+      padding: 0.35rem 0.55rem;
+      font-size: 0.7rem;
+      font-weight: 600;
+      color: #166534;
+      opacity: 0.75;
+      border-bottom: 1.5px solid rgba(22,101,52,0.25);
+      white-space: nowrap;
+    }
+
+    .cc-table td {
+      padding: 0.42rem 0.55rem;
+      border-bottom: 1px solid rgba(22,101,52,0.1);
+      vertical-align: middle;
+      word-break: break-word;
+    }
+
+    .cc-table tr:last-child td { border-bottom: none; }
+
+    .cc-table .cc-code {
+      font-family: "SF Mono", "Fira Code", monospace;
+      font-weight: 700;
+      font-size: 0.8rem;
+      white-space: nowrap;
+    }
+
+    .cc-table tr.cc-not-found td {
+      color: #92400e;
+      background: rgba(254,215,170,0.2);
+    }
+
+    .cc-table .cc-error-msg {
+      font-style: italic;
+      font-size: 0.78rem;
+    }
+
+    /* ── Candidate disambiguation list ───────────────────────────────────────── */
+    .result.info {
+      display: block;
+      background: #eff6ff;
+      border: 1.5px solid #93c5fd;
+      color: #1e3a5f;
+    }
+
+    .candidates-header {
+      font-size: 0.82rem;
+      font-weight: 600;
+      margin-bottom: 0.75rem;
+    }
+
+    .candidates-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.85rem;
+    }
+
+    .candidates-table th {
+      text-align: left;
+      padding: 0.3rem 0.5rem;
+      font-size: 0.7rem;
+      font-weight: 600;
+      opacity: 0.65;
+      border-bottom: 1px solid rgba(30,58,95,0.2);
+    }
+
+    .candidates-table td {
+      padding: 0.45rem 0.5rem;
+      border-bottom: 1px solid rgba(30,58,95,0.08);
+      vertical-align: middle;
+    }
+
+    .candidates-table tr:last-child td { border-bottom: none; }
+
+    .candidate-row { cursor: pointer; }
+
+    .candidate-row:hover td { background: rgba(147,197,253,0.25); }
+
+    .candidates-table .cand-num {
+      font-family: "SF Mono", "Fira Code", monospace;
+      font-weight: 700;
+      font-size: 0.8rem;
+      white-space: nowrap;
+    }
+
+</style>
 </head>
 <body>
   <div class="card">
@@ -221,7 +392,7 @@
       </div>
       <div>
         <h1>Oracle HCM Position Lookup</h1>
-        <p>Retrieve position code by person number</p>
+        <p>Retrieve position code by person number or name</p>
       </div>
     </div>
 
@@ -229,11 +400,11 @@
     <div class="credentials-box">
       <div class="field">
         <label for="baseUrl">HCM Base URL</label>
-        <input type="url" id="baseUrl" placeholder="https://your-instance.fa.oraclecloud.com" />
+        <input type="url" id="baseUrl" value="https://fa-exci-saasfaprod1.fa.ocs.oraclecloud.com" />
       </div>
       <div class="field">
         <label for="username">Username</label>
-        <input type="text" id="username" placeholder="hcm.admin" autocomplete="username" />
+        <input type="text" id="username" value="801391227" autocomplete="username" />
       </div>
       <div class="field">
         <label for="password">Password</label>
@@ -243,7 +414,7 @@
 
     <p class="section-label">Lookup</p>
     <div class="lookup-row">
-      <input type="text" id="personNumber" placeholder="Person Number" />
+      <input type="text" id="personNumber" placeholder="Person Number or Name" />
       <button id="lookupBtn" onclick="lookup()">
         <span class="spinner"></span>
         <span class="btn-label">Look Up</span>
@@ -252,28 +423,54 @@
 
     <div class="result" id="result"></div>
 
-    <p class="note">Credentials are never stored. All requests are made directly from your browser to the HCM API.</p>
+    <hr class="section-divider" />
+
+    <p class="section-label">Cost Center Report</p>
+    <div class="lookup-row">
+      <input type="text" id="costCenter" placeholder="Cost Center(s), e.g. 1001, 1002, 1003" />
+      <button id="ccBtn" onclick="runCCReport()">
+        <span class="spinner"></span>
+        <span class="btn-label">Run Report</span>
+      </button>
+    </div>
+
+    <div class="result" id="ccResult"></div>
+
+    <p class="note">Credentials are never stored. All requests are made securely via the desktop app — no browser CORS restrictions.</p>
   </div>
 
   <script>
-    // Allow Enter key in any field to trigger lookup
-    document.querySelectorAll('input').forEach(el => {
-      el.addEventListener('keydown', e => { if (e.key === 'Enter') lookup(); });
+    // ── Restore saved settings on startup ──────────────────────────────────────
+    window.hcmAPI.getSettings().then(s => {
+      if (s.baseUrl)  document.getElementById('baseUrl').value  = s.baseUrl;
+      if (s.username) document.getElementById('username').value = s.username;
+    });
+
+    document.getElementById('costCenter').addEventListener('keydown', e => {
+      if (e.key === 'Enter') runCCReport();
+    });
+
+    ['baseUrl', 'username', 'password', 'personNumber'].forEach(id => {
+      document.getElementById(id).addEventListener('keydown', e => {
+        if (e.key === 'Enter') lookup();
+      });
     });
 
     async function lookup() {
       const baseUrl    = document.getElementById('baseUrl').value.trim().replace(/\/$/, '');
       const username   = document.getElementById('username').value.trim();
       const password   = document.getElementById('password').value;
-      const personNum  = document.getElementById('personNumber').value.trim();
+      const searchTerm = document.getElementById('personNumber').value.trim();
       const btn        = document.getElementById('lookupBtn');
       const resultEl   = document.getElementById('result');
 
       // Basic validation
-      if (!baseUrl || !username || !password || !personNum) {
-        showError('All fields are required.');
+      if (!baseUrl || !username || !password || !searchTerm) {
+        showError('All fields are required, including a Person Number or Name.');
         return;
       }
+
+      window.hcmAPI.saveSettings({ baseUrl, username });
 
       // Loading state
       btn.disabled = true;
@@ -282,8 +479,12 @@
       resultEl.innerHTML = '';
 
       try {
-        const positionCode = await getPositionCode(baseUrl, username, password, personNum);
-        showSuccess(personNum, positionCode);
+        const result = await doLookup(baseUrl, username, password, searchTerm);
+        if (result.candidates) {
+          showCandidates(result.candidates);
+        } else {
+          showSuccess(result.personNumber, result.displayName, result.positionCode, result.positionName, result.provisioningRules, result.rulesError, result.autoProvRules, result.autoProvRuleHeaders, result.autoProvError);
+        }
       } catch (err) {
         showError(err.message);
       } finally {
@@ -292,76 +493,132 @@
       }
     }
 
-    async function getPositionCode(baseUrl, username, password, personNumber) {
-      const token = btoa(`${username}:${password}`);
-
-      const params = new URLSearchParams({
-        q: `PersonNumber=${personNumber}`,
-        expand: 'workRelationships,workRelationships.assignments',
-      });
-
-      const url = `${baseUrl}/hcmRestApi/resources/latest/workers?${params}`;
-
-      const response = await fetch(url, {
-        headers: {
-          'Authorization': `Basic ${token}`,
-          'Content-Type': 'application/json',
-        },
-      });
-
-      if (!response.ok) {
-        const body = await response.text().catch(() => '');
-        throw new Error(`API error ${response.status} ${response.statusText}${body ? ': ' + body : ''}`);
-      }
-
-      const data = await response.json();
-
-      if (!data.items || data.items.length === 0) {
-        throw new Error(`No worker found with Person Number: ${personNumber}`);
-      }
-
-      const worker = data.items[0];
-      const relationships = worker.workRelationships ?? [];
-
-      if (relationships.length === 0) {
-        throw new Error(`No work relationships found for Person Number: ${personNumber}`);
-      }
-
-      // Prefer active primary assignment
-      for (const rel of relationships) {
-        for (const assignment of rel.assignments ?? []) {
-          if (
-            assignment.PrimaryFlag === true &&
-            assignment.AssignmentStatusType === 'ACTIVE' &&
-            assignment.PositionCode
-          ) {
-            return assignment.PositionCode;
-          }
-        }
-      }
-
-      // Fall back to any assignment with a position code
-      for (const rel of relationships) {
-        for (const assignment of rel.assignments ?? []) {
-          if (assignment.PositionCode) return assignment.PositionCode;
-        }
-      }
-
-      throw new Error(`No position code found for Person Number: ${personNumber}`);
+    async function doLookup(baseUrl, username, password, searchTerm) {
+      const result = await window.hcmAPI.lookup({ baseUrl, username, password, searchTerm });
+      if (!result.ok) throw new Error(result.error);
+      if (result.candidates) return { candidates: result.candidates };
+      return {
+        positionCode        : result.positionCode,
+        positionName        : result.positionName,
+        provisioningRules   : result.provisioningRules,
+        rulesError          : result.rulesError,
+        autoProvRules       : result.autoProvRules,
+        autoProvRuleHeaders : result.autoProvRuleHeaders,
+        autoProvError       : result.autoProvError,
+        personNumber        : result.personNumber,
+        displayName         : result.displayName,
+      };
     }
 
-    function showSuccess(personNumber, positionCode) {
+    function showCandidates(candidates) {
+      const el = document.getElementById('result');
+      el.className = 'result info';
+      const rows = candidates.map(c => `
+        <tr class="candidate-row" onclick="selectCandidate('${c.personNumber ?? ''}')">
+          <td class="cand-num">${esc(c.personNumber ?? '—')}</td>
+          <td>${esc(c.displayName ?? '—')}</td>
+        </tr>`).join('');
+      el.innerHTML = `
+        <p class="candidates-header">Multiple workers found — select one:</p>
+        <table class="candidates-table">
+          <thead><tr><th>Person #</th><th>Name</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>`;
+    }
+
+    function selectCandidate(personNumber) {
+      document.getElementById('personNumber').value = personNumber;
+      lookup();
+    }
+
+    function showSuccess(personNumber, displayName, positionCode, positionName, provisioningRules, rulesError, autoProvRules, autoProvRuleHeaders, autoProvError) {
       const el = document.getElementById('result');
       el.className = 'result success';
+
+      let rulesHtml;
+      if (rulesError) {
+        rulesHtml = `<p class="rules-error">&#9888; Could not load provisioning rules: ${esc(rulesError)}</p>`;
+      } else if (provisioningRules.length === 0) {
+        rulesHtml = `<p class="no-rules">No auto-provisioning rules found for this position.</p>`;
+      } else {
+        rulesHtml = `
+          <table class="rules-table">
+            <thead>
+              <tr>
+                <th>Role Code</th>
+                <th>Date Assigned</th>
+                <th>Last Updated</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${provisioningRules.map(role => `
+                <tr>
+                  <td class="mono">${esc(role.RoleCode ?? '—')}</td>
+                  <td>${esc(formatDate(role.CreationDate) ?? '—')}</td>
+                  <td>${esc(formatDate(role.LastUpdateDate) ?? '—')}</td>
+                </tr>`).join('')}
+            </tbody>
+          </table>`;
+      }
+
+      const nameRow = displayName
+        ? `<div class="result-row">
+          <span class="result-key">Name</span>
+          <span class="result-val">${esc(displayName)}</span>
+        </div>`
+        : '';
+
       el.innerHTML = `
         <div class="result-row">
           <span class="result-key">Person Number</span>
           <span class="result-val">${esc(personNumber)}</span>
         </div>
+        ${nameRow}
         <div class="result-row">
           <span class="result-key">Position Code</span>
           <span class="result-val">${esc(positionCode)}</span>
+        </div>
+        ${positionName ? `
+        <div class="result-row">
+          <span class="result-key">Position Name</span>
+          <span class="result-val" style="font-family:inherit;letter-spacing:normal">${esc(positionName)}</span>
+        </div>` : ''}
+        <div class="rules-section">
+          <p class="rules-label">
+            Assigned Roles
+            ${!rulesError ? `<span class="rules-count">${provisioningRules.length}</span>` : ''}
+          </p>
+          ${rulesHtml}
+        </div>
+        <div class="rules-section">
+          <p class="rules-label">
+            Auto-Provisioning Rules
+            ${!autoProvError ? `<span class="rules-count">${(autoProvRules ?? []).length}</span>` : ''}
+          </p>
+          ${autoProvError
+            ? `<p class="rules-error">&#9888; Could not load auto-provisioning rules: ${esc(autoProvError)}</p>`
+            : (autoProvRules ?? []).length === 0
+              ? `<p class="no-rules">No auto-provisioning rules found for this position.</p>`
+              : (() => {
+                  const cols = (autoProvRuleHeaders ?? []).filter(h => h !== '');
+                  return `<table class="rules-table">
+                    <thead><tr>${cols.map(h => `<th>${esc(h)}</th>`).join('')}</tr></thead>
+                    <tbody>
+                      ${autoProvRules.map(row =>
+                        `<tr>${cols.map(h => `<td class="mono">${esc(row[h] ?? '—')}</td>`).join('')}</tr>`
+                      ).join('')}
+                    </tbody>
+                  </table>`;
+                })()
+          }
         </div>`;
+    }
+
+    function formatDate(dateStr) {
+      if (!dateStr) return null;
+      const d = new Date(dateStr);
+      if (isNaN(d.getTime())) return dateStr;
+      return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
     }
 
     function showError(msg) {
@@ -369,6 +626,85 @@
       el.className = 'result error';
       el.innerHTML = `<span class="error-icon">&#9888;</span><span class="error-msg">${esc(msg)}</span>`;
     }
+
+    // ── Cost Center Report ─────────────────────────────────────────────────────
+
+    async function runCCReport() {
+      const costCenter = document.getElementById('costCenter').value.trim();
+      const btn        = document.getElementById('ccBtn');
+      const resultEl   = document.getElementById('ccResult');
+
+      if (!costCenter) {
+        showCCError('Please enter one or more Cost Center numbers.');
+        return;
+      }
+
+      btn.disabled = true;
+      btn.classList.add('loading');
+      resultEl.className = 'result';
+      resultEl.innerHTML = '';
+
+      try {
+        const baseUrl  = document.getElementById('baseUrl').value.trim();
+        const username = document.getElementById('username').value.trim();
+        const password = document.getElementById('password').value.trim();
+        window.hcmAPI.saveSettings({ baseUrl, username });
+        const result = await window.hcmAPI.ccReport({ baseUrl, username, password, costCenter });
+        if (!result.ok) throw new Error(result.error);
+        showCCResults(result.results);
+      } catch (err) {
+        showCCError(err.message);
+      } finally {
+        btn.disabled = false;
+        btn.classList.remove('loading');
+      }
+    }
+
+    function showCCResults(results) {
+      const el = document.getElementById('ccResult');
+      el.className = 'result success';
+
+      const rows = results.map(r => {
+        if (r.error) {
+          return `<tr class="cc-not-found">
+            <td class="cc-code">${esc(r.costCenter)}</td>
+            <td colspan="4" class="cc-error-msg">&#9888; ${esc(r.error)}</td>
+          </tr>`;
+        }
+        const managerDisplay = r.manager
+          ? esc(r.manager) + (r.managerPersonNum ? ` (${esc(r.managerPersonNum)})` : '')
+          : '—';
+        return `<tr>
+          <td class="cc-code">${esc(r.costCenter)}</td>
+          <td>${esc(r.departmentName   ?? '—')}</td>
+          <td>${managerDisplay}</td>
+          <td>${esc(r.managerStatus   ?? '—')}</td>
+          <td>${esc(r.managerEmail    ?? '—')}</td>
+        </tr>`;
+      }).join('');
+
+      el.innerHTML = `
+        <table class="cc-table">
+          <thead>
+            <tr>
+              <th>Cost Center</th>
+              <th>Department</th>
+              <th>Manager</th>
+              <th>Manager Status</th>
+              <th>Manager Email</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>`;
+    }
+
+    function showCCError(msg) {
+      const el = document.getElementById('ccResult');
+      el.className = 'result error';
+      el.innerHTML = `<span class="error-icon">&#9888;</span><span class="error-msg">${esc(msg)}</span>`;
+    }
+
+    // ── Shared helpers ─────────────────────────────────────────────────────────
 
     function esc(str) {
       return String(str)
