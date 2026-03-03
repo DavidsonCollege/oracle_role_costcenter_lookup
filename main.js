@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, shell } = require('electron');
 const path = require('path');
 const fs   = require('fs');
 const XLSX = require('xlsx');
@@ -38,6 +38,8 @@ app.on('window-all-closed', () => {
 function settingsPath() {
   return path.join(app.getPath('userData'), 'settings.json');
 }
+
+ipcMain.handle('shell:openExternal', (_event, url) => shell.openExternal(url));
 
 ipcMain.handle('hcm:getSettings', () => {
   try {

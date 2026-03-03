@@ -5,4 +5,5 @@ contextBridge.exposeInMainWorld('hcmAPI', {
   ccReport    : (params) => ipcRenderer.invoke('hcm:ccreport',     params),
   getSettings : ()       => ipcRenderer.invoke('hcm:getSettings'),
   saveSettings: (params) => ipcRenderer.invoke('hcm:saveSettings', params),
+  openExternal: (url)    => ipcRenderer.invoke('shell:openExternal', url),
 });
