@@ -40,25 +40,32 @@ Confirm GitHub Actions has permission to publish releases:
 - Go to your repo → **Settings** → **Actions** → **General**
 - Set Workflow permissions to **Read and write permissions**
 
-### For each new release
+### How releases work
+
+Builds are created entirely by **GitHub Actions** — you never run the build commands locally. Pushing a `v*` tag to GitHub triggers the workflow, which builds the Mac DMG and Windows EXE in parallel and publishes them as a GitHub Release automatically. Running `npm run build` locally after pushing a tag will fail because the release already exists.
+
+### If you are working with Claude Code
+
+Tell Claude: **"commit, push, and build"** (or just **"build"** if changes are already committed). Claude will handle everything — bumping the version, committing, pushing main, creating and pushing the tag — which triggers the GitHub Actions release pipeline.
+
+Never paste GitHub Actions log output and ask Claude to run the commands shown. That output is from the CI runner, not instructions for local execution.
+
+### If you are doing it yourself
 
 1. Make and test your code changes locally with `npm start`
 2. Open `package.json` and bump the `"version"` field following semver:
    - Bug fixes: `1.0.0` → `1.0.1`
    - New features: `1.0.0` → `1.1.0`
-3. Commit the version bump:
+3. Commit all changes including the version bump, then push main:
    ```bash
-   git add package.json
+   git add .
    git commit -m "v1.1.0"
-   ```
-4. Push the commit to main first:
-   ```bash
    git push origin main
    ```
-5. Create and push the tag (must start with `v`):
+4. Create and push the tag (must start with `v`):
    ```bash
    git tag v1.1.0
    git push origin v1.1.0
    ```
-6. GitHub Actions will automatically build the Mac DMG and Windows EXE in parallel and attach both to a new GitHub Release — monitor progress at **https://github.com/JessamynR/oracle_tools/actions**
-7. Once the workflow completes, Windows users will be prompted to update automatically on their next launch; Mac users will see a notification dialog
+5. GitHub Actions will automatically build both platforms and publish the release — monitor progress at **https://github.com/JessamynR/oracle_tools/actions**
+6. Once the workflow completes, Windows users will be prompted to update automatically on their next launch; Mac users will see a notification dialog
