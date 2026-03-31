@@ -85,8 +85,12 @@ ipcMain.handle('hcm:saveSettings', (_event, { baseUrl, username }) => {
 // ── IPC: hcm:ccHierarchy ─────────────────────────────────────────────────────
 //
 // Runs the cost center hierarchy SOAP report and returns all CHILD_VALUE entries
-// (column E) where HIERARCHY_PATH (column B) contains _<costCenterCode>_
-// and the child value does NOT start with 'C'.
+// (column E) where HIERARCHY_PATH (column B) contains the given costCenterCode
+// (e.g. "C480") and the child value does NOT start with 'C'.
+//
+// Child values starting with 'C' are parent/group nodes in the Oracle hierarchy,
+// not real cost centers. Only numeric-style values (e.g. "1234") represent
+// actual cost centers that can be used in the Cost Center Report.
 // Returns { ok: true, values: ['1001', '1002', ...] }
 //       | { ok: false, error: '...' }
 
@@ -118,7 +122,7 @@ ipcMain.handle('hcm:ccHierarchy', async (_event, { baseUrl, username, password, 
       return idx !== -1 ? idx : 4;
     })();
 
-    const pattern = costCenterCode; // e.g. C480
+    const pattern = costCenterCode; // e.g. "C480" — matched as a substring of HIERARCHY_PATH
 
     const values = raw
       .slice(headerRowIdx + 1)
@@ -126,6 +130,8 @@ ipcMain.handle('hcm:ccHierarchy', async (_event, { baseUrl, username, password, 
       .filter(row => {
         const hierarchyPath = String(row[hierarchyIdx] ?? '').trim();
         const childValue    = String(row[childColIdx]  ?? '').trim();
+        // Exclude child values starting with 'C' — those are intermediate parent
+        // nodes in the Oracle hierarchy tree, not usable cost center numbers.
         return hierarchyPath.includes(pattern) && childValue && !childValue.startsWith('C');
       })
       .map(row => String(row[childColIdx] ?? '').trim());
@@ -238,6 +244,7 @@ async function runSoapReport(baseUrl, username, password, reportPath) {
 <reportAbsolutePath>${reportPath}</reportAbsolutePath>
 <attributeFormat>xlsx</attributeFormat>
 <sizeOfDataChunkDownload>-1</sizeOfDataChunkDownload>
+<!-- -1 = return the entire report in a single response (no streaming/pagination) -->
 </reportRequest>
 <userID>${username}</userID>
 <password>${password}</password>
@@ -256,6 +263,9 @@ async function runSoapReport(baseUrl, username, password, reportPath) {
 
   const responseText = await response.text();
 
+  // Check for a SOAP fault BEFORE checking HTTP status — Oracle BI Publisher
+  // returns HTTP 200 even when the report fails (e.g. wrong path, permission denied).
+  // The actual error is in the SOAP <Fault> body, not the HTTP status code.
   const fault = soapFaultMessage(responseText);
   if (fault) throw new Error(`SOAP fault: ${fault}`);
 
@@ -627,6 +637,9 @@ async function getAssignedRoles(baseUrl, username, password, personId) {
 
   const rolesData = await rolesRes.json();
   const items = rolesData.items ?? [];
+  // Filter to roles relevant to access request reviews: DAV_SEC_* codes are the
+  // security roles used by this org; REPORTS roles control BI report access.
+  // All other roles (HR, payroll, etc.) are excluded to keep the UI focused.
   return items.filter(role =>
     role.RoleCode?.startsWith('DAV_SEC') || role.RoleCode?.includes('REPORTS')
   );

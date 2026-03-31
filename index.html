@@ -578,7 +578,12 @@
             <tbody>
               ${provisioningRules.map(role => {
                 const code = role.RoleCode ?? '';
+                // DAV_SEC_C<digits> codes (e.g. DAV_SEC_C480) represent hierarchical cost
+                // center groups. Clicking runs a SOAP hierarchy lookup and merges all child
+                // cost centers into the Cost Center Report field.
                 const cMatch  = code.match(/DAV_SEC_(C\d+)/);
+                // Other DAV_SEC_* codes (e.g. DAV_SEC_1234) map directly to a single cost
+                // center. Clicking appends that cost center to the Cost Center Report field.
                 const segCode = !cMatch && code.startsWith('DAV_SEC_')
                   ? (code.match(/DAV_SEC_([^_]+)/)?.[1] ?? null)
                   : null;
@@ -766,8 +771,8 @@
     //
     // Called when a DAV_SEC_C... role code link is clicked.
     // Runs the hierarchy SOAP report, filters child values where HIERARCHY_PATH
-    // contains _<costCenterCode>_ and CHILD_VALUE doesn't start with 'C',
-    // then populates the Cost Center Report field with the results.
+    // contains the cost center code (e.g. "C480") and CHILD_VALUE doesn't start
+    // with 'C', then merges the results into the Cost Center Report field.
 
     async function lookupHierarchy(costCenterCode) {
       const ccResult = document.getElementById('ccResult');
@@ -800,6 +805,9 @@
 
     // ── Shared helpers ─────────────────────────────────────────────────────────
 
+    // Escapes a value for safe insertion into HTML — prevents XSS if an API
+    // response contains characters like <, >, &, or ". Must be used on every
+    // user-visible string that is written via innerHTML.
     function esc(str) {
       return String(str)
         .replace(/&/g, '&amp;')
