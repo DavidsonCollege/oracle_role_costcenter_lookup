@@ -225,12 +225,30 @@ electron-builder does **not** auto-include `node_modules` unless specified here.
 
 Releases are built by **GitHub Actions** (`.github/workflows/build.yml`). The workflow triggers on any `v*` tag push and runs two parallel jobs — one on `macos-latest` producing a universal DMG, one on `windows-latest` producing an NSIS `.exe` — then publishes both as assets on a GitHub Release via `GH_TOKEN`.
 
+**Workflow key points:**
+- Uses `actions/checkout@v6` and `actions/setup-node@v6` — these run on Node.js 24. Do not downgrade to v4 (Node.js 20, deprecated).
+- `fail-fast: false` on the matrix — both platform jobs run independently; one failure does not cancel the other.
+- Each runner uses its own platform-specific script (`build:mac` / `build:win`). Never use `npm run build` (which targets both platforms) in CI — the Mac runner cannot build Windows targets and vice versa.
+- `icon.ico` must be at least 256x256. The current file was regenerated from `assets/My Oracle App image.png` (1024x1024 source).
+
 **To ship a release:**
 ```bash
 # 1. Bump "version" in package.json (semver: patch for fixes, minor for features)
-# 2. Commit, tag, and push:
+# 2. Commit and push main first:
 git add package.json && git commit -m "v1.x.x"
-git tag v1.x.x && git push origin main --tags
+git push origin main
+# 3. Create and push the tag separately:
+git tag v1.x.x && git push origin v1.x.x
+```
+
+**Critical:** push `main` before pushing the tag. GitHub uses the workflow file from the commit the tag points to. If workflow changes and the tag are pushed together, the tag may point to a commit with the old workflow.
+
+**If a release needs retagging** (e.g. after fixing the workflow mid-release):
+```bash
+git tag -d v1.x.x                    # delete local tag
+git tag v1.x.x                       # recreate at current HEAD
+git push origin :refs/tags/v1.x.x    # delete remote tag
+git push origin v1.x.x               # push new tag
 ```
 
 First-time setup: repo → Settings → Actions → General → set Workflow permissions to **Read and write**.
