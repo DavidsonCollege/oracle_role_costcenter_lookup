@@ -172,7 +172,7 @@ ipcMain.handle('hcm:lookup', async (_event, { baseUrl, username, password, searc
       resolvedPersonNumber = candidates[0].personNumber;
     }
 
-    const { positionCode, positionName, personId, personNumber, displayName } =
+    const { positionCode, positionName, personId, personNumber, displayName, legalName, preferredName } =
       await getWorkerInfo(baseUrl, username, password, resolvedPersonNumber);
 
     let provisioningRules = [];
@@ -191,7 +191,7 @@ ipcMain.handle('hcm:lookup', async (_event, { baseUrl, username, password, searc
       autoProvError = err.message;
     }
 
-    return { ok: true, positionCode, positionName, provisioningRules, rulesError, autoProvRules, autoProvError, personNumber, displayName };
+    return { ok: true, positionCode, positionName, provisioningRules, rulesError, autoProvRules, autoProvError, personNumber, displayName, legalName, preferredName };
   } catch (err) {
     return { ok: false, error: err.message };
   }
@@ -419,7 +419,7 @@ async function getWorkerInfo(baseUrl, username, password, personNumber) {
 
   const params = new URLSearchParams({
     q: `PersonNumber=${personNumber}`,
-    expand: 'workRelationships,workRelationships.assignments',
+    expand: 'names,workRelationships,workRelationships.assignments',
   });
 
   const url = `${baseUrl}/hcmRestApi/resources/latest/workers?${params}`;
@@ -444,7 +444,30 @@ async function getWorkerInfo(baseUrl, username, password, personNumber) {
 
   const worker = data.items[0];
   const personId = worker.PersonId;
-  const displayName = worker.DisplayName ?? null;
+
+  // Oracle may return multiple name entries. The first is the legal name; a second entry
+  // (if present) is the preferred name. KnownAs on the legal entry covers preferred first name only.
+  const names = worker.names ?? [];
+  const legalEntry     = names[0] ?? null;
+  const preferredEntry = names.length > 1 ? names[1] : null;
+
+  const legalFirst = legalEntry?.FirstName?.trim() ?? null;
+  const legalLast  = legalEntry?.LastName?.trim()  ?? null;
+  const legalName  = legalFirst && legalLast ? `${legalFirst} ${legalLast}` : (legalEntry?.DisplayName?.trim() ?? null);
+
+  let preferredName = null;
+  if (preferredEntry) {
+    // Separate preferred name record — use its first/last name.
+    const prefFirst = preferredEntry.FirstName?.trim() ?? legalFirst;
+    const prefLast  = preferredEntry.LastName?.trim()  ?? legalLast;
+    const pref = prefFirst && prefLast ? `${prefFirst} ${prefLast}` : null;
+    if (pref && pref !== legalName) preferredName = pref;
+  } else if (legalEntry?.KnownAs?.trim() && legalEntry.KnownAs.trim() !== legalFirst) {
+    // No separate record — KnownAs is a preferred first name with the same last name.
+    preferredName = legalLast ? `${legalEntry.KnownAs.trim()} ${legalLast}` : legalEntry.KnownAs.trim();
+  }
+
+  const displayName = preferredName ?? legalName;
   const relationships = worker.workRelationships ?? [];
 
   if (relationships.length === 0) {
@@ -485,7 +508,7 @@ async function getWorkerInfo(baseUrl, username, password, personNumber) {
   // positions resource using the position code.
   const positionName = await fetchPositionName(baseUrl, token, positionCode);
 
-  return { positionCode, positionName, personId, personNumber, displayName };
+  return { positionCode, positionName, personId, personNumber, displayName, legalName, preferredName };
 }
 
 // Fetches the human-readable name for a position code from the positions resource.
@@ -528,6 +551,7 @@ async function fetchPositionName(baseUrl, token, positionCode) {
 // determines the full candidate list (up to 25). Subsequent attempts are skipped
 // so we don't blend results from different name fields.
 async function findWorkersByName(baseUrl, token, name) {
+  name = name.trim();
   const escaped = name.replace(/'/g, "''"); // escape single quotes
 
   const headers = {
@@ -535,29 +559,51 @@ async function findWorkersByName(baseUrl, token, name) {
     'Content-Type': 'application/json',
   };
 
-  // If the input contains a space, try FirstName + LastName combination first.
+  // If the input contains a space, split into first/last parts for targeted attempts.
   const spaceIdx = name.indexOf(' ');
-  const fullNameAttempts = spaceIdx !== -1 ? (() => {
-    const fn = name.slice(0, spaceIdx).replace(/'/g, "''");
-    const ln = name.slice(spaceIdx + 1).replace(/'/g, "''");
-    return [
-      { endpoint: 'workers',       q: `FirstName='${fn}' AND LastName='${ln}'` },
-      { endpoint: 'publicWorkers', q: `FirstName='${fn}' AND LastName='${ln}'` },
-    ];
-  })() : [];
+  const nameParts = spaceIdx !== -1 ? {
+    fn: name.slice(0, spaceIdx).trim().replace(/'/g, "''"),
+    ln: name.slice(spaceIdx + 1).trim().replace(/'/g, "''"),
+  } : null;
+
+  const fullNameAttempts = nameParts ? [
+    // Exact legal name.
+    { endpoint: 'workers',       q: `FirstName='${nameParts.fn}' AND LastName='${nameParts.ln}'` },
+    { endpoint: 'publicWorkers', q: `FirstName='${nameParts.fn}' AND LastName='${nameParts.ln}'` },
+    // Preferred first name (KnownAs) with legal last name.
+    { endpoint: 'workers',       q: `KnownAs='${nameParts.fn}' AND LastName='${nameParts.ln}'`   },
+    { endpoint: 'publicWorkers', q: `KnownAs='${nameParts.fn}' AND LastName='${nameParts.ln}'`   },
+    // Child resource dot-notation — queries preferred name records directly.
+    { endpoint: 'workers',       q: `names.FirstName='${nameParts.fn}' AND names.LastName='${nameParts.ln}'` },
+    // Full DisplayName match — Oracle may compute this from the preferred name record.
+    { endpoint: 'publicWorkers', q: `DisplayName='${escaped}'` },
+    // Broad: last word as LastName only — catches preferred last name if Oracle surfaces it.
+    { endpoint: 'workers',       q: `LastName='${nameParts.ln}'` },
+    { endpoint: 'publicWorkers', q: `LastName='${nameParts.ln}'` },
+  ] : [];
 
   const attempts = [
     ...fullNameAttempts,
-    // /workers is tried first — confirmed accessible for this account.
+    // Single-word fallbacks.
     { endpoint: 'workers',       q: `FirstName='${escaped}'`   },
     { endpoint: 'workers',       q: `LastName='${escaped}'`    },
-    // /publicWorkers as fallback — name fields are explicitly documented as queryable.
-    { endpoint: 'publicWorkers', q: `FirstName='${escaped}'`   },
-    { endpoint: 'publicWorkers', q: `LastName='${escaped}'`    },
-    { endpoint: 'publicWorkers', q: `DisplayName='${escaped}'` },
-    { endpoint: 'publicWorkers', q: `KnownAs='${escaped}'`     },
-    { endpoint: 'publicWorkers', q: `FullName='${escaped}'`    },
+    { endpoint: 'workers',       q: `KnownAs='${escaped}'`     },
+    // Child resource dot-notation — queries the names child record, covers preferred name records.
+    { endpoint: 'workers',       q: `names.FirstName='${escaped}'` },
+    { endpoint: 'workers',       q: `names.LastName='${escaped}'`  },
+    { endpoint: 'publicWorkers', q: `FirstName='${escaped}'`         },
+    { endpoint: 'publicWorkers', q: `FirstName LIKE '${escaped}%'`  },
+    { endpoint: 'publicWorkers', q: `LastName='${escaped}'`          },
+    { endpoint: 'publicWorkers', q: `LastName LIKE '${escaped}%'`   },
+    { endpoint: 'publicWorkers', q: `DisplayName='${escaped}'`       },
+    { endpoint: 'publicWorkers', q: `KnownAs='${escaped}'`           },
+    { endpoint: 'publicWorkers', q: `KnownAs LIKE '${escaped}%'`    },
+    { endpoint: 'publicWorkers', q: `FullName='${escaped}'`          },
   ];
+
+  // Run all attempts and merge unique results by PersonNumber so that legal-name
+  // and preferred-name (KnownAs) matches are both included.
+  const seen = new Map(); // personNumber → candidate
 
   for (const { endpoint, q } of attempts) {
     let response;
@@ -566,22 +612,25 @@ async function findWorkersByName(baseUrl, token, name) {
       const url = `${baseUrl}/hcmRestApi/resources/latest/${endpoint}?${params}`;
       response = await fetchWithTimeout(url, { headers });
     } catch {
-      continue; // network error — try the next attempt
+      continue;
     }
 
-    if (!response.ok) continue; // field unsupported or access denied — try next
+    if (!response.ok) continue;
 
     const data = await response.json();
-    if (data.items && data.items.length > 0) {
-      // First successful hit — return all matches from this field and stop.
-      return data.items.map(item => ({
-        personNumber: item.PersonNumber,
-        displayName : item.DisplayName ?? null,
-      }));
+    if (data.items) {
+      for (const item of data.items) {
+        if (item.PersonNumber && !seen.has(item.PersonNumber)) {
+          seen.set(item.PersonNumber, {
+            personNumber: item.PersonNumber,
+            displayName : item.DisplayName?.trim() ?? null,
+          });
+        }
+      }
     }
   }
 
-  return []; // no matches found across all attempts
+  return [...seen.values()];
 }
 
 // ── Assigned roles ────────────────────────────────────────────────────────────

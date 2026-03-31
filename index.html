@@ -532,6 +532,8 @@
         autoProvError    : result.autoProvError,
         personNumber     : result.personNumber,
         displayName      : result.displayName,
+        legalName        : result.legalName,
+        preferredName    : result.preferredName,
       };
     }
 
@@ -556,7 +558,7 @@
       lookup();
     }
 
-    function showSuccess({ personNumber, displayName, positionCode, positionName, provisioningRules, rulesError, autoProvRules, autoProvError }) {
+    function showSuccess({ personNumber, displayName, legalName, preferredName, positionCode, positionName, provisioningRules, rulesError, autoProvRules, autoProvError }) {
       const el = document.getElementById('result');
       el.className = 'result success';
 
@@ -602,12 +604,15 @@
           </table>`;
       }
 
-      const nameRow = displayName
-        ? `<div class="result-row">
-          <span class="result-key">Name</span>
-          <span class="result-val">${esc(displayName)}</span>
-        </div>`
-        : '';
+      const nameDisplay = preferredName
+        ? (legalName && legalName !== preferredName
+            ? `${esc(preferredName)} <span style="color:#666">(${esc(legalName)})</span>`
+            : esc(preferredName))
+        : (legalName ? esc(legalName) : '—');
+      const nameRow = `<div class="result-row">
+        <span class="result-key">Name</span>
+        <span class="result-val">${nameDisplay}</span>
+      </div>`;
 
       el.innerHTML = `
         <div class="result-row">
