@@ -65,7 +65,6 @@ function settingsPath() {
   return path.join(app.getPath('userData'), 'settings.json');
 }
 
-ipcMain.handle('shell:openExternal', (_event, url) => shell.openExternal(url));
 
 ipcMain.handle('hcm:getSettings', () => {
   try {

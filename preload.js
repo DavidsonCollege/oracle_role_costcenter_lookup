@@ -6,5 +6,4 @@ contextBridge.exposeInMainWorld('hcmAPI', {
   ccHierarchy : (params) => ipcRenderer.invoke('hcm:ccHierarchy',  params),
   getSettings : ()       => ipcRenderer.invoke('hcm:getSettings'),
   saveSettings: (params) => ipcRenderer.invoke('hcm:saveSettings', params),
-  openExternal: (url)    => ipcRenderer.invoke('shell:openExternal', url),
 });
