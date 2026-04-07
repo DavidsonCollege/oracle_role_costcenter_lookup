@@ -209,6 +209,33 @@ async function fetchWithTimeout(url, options = {}, ms = 30000) {
   }
 }
 
+// ── Shared: XML helpers ───────────────────────────────────────────────────────
+
+function xmlEscape(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+function extractElement(xml, localName) {
+  const re = new RegExp(
+    `<[^\\s>/]*:?${localName}[^>]*>([\\s\\S]*?)<\\/[^\\s>/]*:?${localName}>`, 'i'
+  );
+  return (xml.match(re) ?? [])[1]?.trim() ?? null;
+}
+
+function soapFaultMessage(xml) {
+  const fault = extractElement(xml, 'Fault');
+  if (!fault) return null;
+  return extractElement(fault, 'faultstring')
+    ?? extractElement(fault, 'Text')
+    ?? extractElement(fault, 'message')
+    ?? `(raw fault) ${fault.replace(/\s+/g, ' ').slice(0, 400)}`;
+}
+
 // ── Shared: SOAP report runner ────────────────────────────────────────────────
 //
 // Handles the SOAP envelope, network call, fault detection, and xlsx decoding.
@@ -226,34 +253,18 @@ async function runSoapReport(baseUrl, username, password, reportPath) {
   if (cached && Date.now() - cached.ts < SOAP_CACHE_TTL) return cached.data;
   const SOAP_ENDPOINT = `${baseUrl.replace(/\/$/, '')}/xmlpserver/services/PublicReportService`;
 
-  function extractElement(xml, localName) {
-    const re = new RegExp(
-      `<[^\\s>/]*:?${localName}[^>]*>([\\s\\S]*?)<\\/[^\\s>/]*:?${localName}>`, 'i'
-    );
-    return (xml.match(re) ?? [])[1]?.trim() ?? null;
-  }
-
-  function soapFaultMessage(xml) {
-    const fault = extractElement(xml, 'Fault');
-    if (!fault) return null;
-    return extractElement(fault, 'faultstring')
-      ?? extractElement(fault, 'Text')
-      ?? extractElement(fault, 'message')
-      ?? `(raw fault) ${fault.replace(/\s+/g, ' ').slice(0, 400)}`;
-  }
-
   const envelope = `<?xml version="1.0" encoding="utf-8"?>
 <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
 <soap:Body>
 <runReport xmlns="http://xmlns.oracle.com/oxp/service/PublicReportService">
 <reportRequest>
-<reportAbsolutePath>${reportPath}</reportAbsolutePath>
+<reportAbsolutePath>${xmlEscape(reportPath)}</reportAbsolutePath>
 <attributeFormat>xlsx</attributeFormat>
 <sizeOfDataChunkDownload>-1</sizeOfDataChunkDownload>
 <!-- -1 = return the entire report in a single response (no streaming/pagination) -->
 </reportRequest>
-<userID>${username}</userID>
-<password>${password}</password>
+<userID>${xmlEscape(username)}</userID>
+<password>${xmlEscape(password)}</password>
 </runReport>
 </soap:Body>
 </soap:Envelope>`;
