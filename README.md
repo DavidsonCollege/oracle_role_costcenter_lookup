@@ -34,6 +34,10 @@ Electron desktop app for looking up Oracle HCM worker positions, assigned securi
 
 ## Setting Up for a New Oracle Instance
 
+### Reference
+
+- PROJECT_NOTES.txt provides a technical overview of the application
+
 ### Prerequisites
 
 - Node.js 18 or later
