@@ -31,7 +31,6 @@ app.whenReady().then(() => {
       // Mac: can't auto-install without code signing — check and notify manually.
       autoUpdater.autoDownload = false;
       autoUpdater.on('error', err => console.error('[updater] error:', err.message));
-      autoUpdater.checkForUpdates();
       autoUpdater.on('update-available', info => {
         dialog.showMessageBox({
           type: 'info',
@@ -41,9 +40,10 @@ app.whenReady().then(() => {
           buttons: ['Download', 'Later'],
           defaultId: 0,
         }).then(({ response }) => {
-          if (response === 0) shell.openExternal('https://github.com/JessamynR/oracle_tools/releases/latest');
+          if (response === 0) shell.openExternal('https://github.com/DavidsonCollege/oracle_role_costcenter_lookup/releases/latest');
         });
       });
+      autoUpdater.checkForUpdates();
     } else {
       // Windows: full auto-update supported.
       autoUpdater.checkForUpdatesAndNotify();
