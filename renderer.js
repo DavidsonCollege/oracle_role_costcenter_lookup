@@ -2,10 +2,27 @@
 document.getElementById('lookupBtn').addEventListener('click', lookup);
 document.getElementById('ccBtn').addEventListener('click', runCCReport);
 
+// ── Button enable/disable based on required fields ──────────────────────────
+function updateButtonStates() {
+  const username   = document.getElementById('username').value.trim();
+  const password   = document.getElementById('password').value;
+  const personNum  = document.getElementById('personNumber').value.trim();
+  const costCenter = document.getElementById('costCenter').value.trim();
+  document.getElementById('lookupBtn').disabled = !username || !password || !personNum;
+  document.getElementById('ccBtn').disabled     = !username || !password || !costCenter;
+}
+
+['username', 'password', 'personNumber', 'costCenter'].forEach(id => {
+  document.getElementById(id).addEventListener('input', updateButtonStates);
+});
+
+updateButtonStates();
+
 // ── Restore saved settings and show version on startup ─────────────────────
 window.hcmAPI.getSettings().then(s => {
   if (s.baseUrl)   document.getElementById('baseUrl').value   = s.baseUrl;
   if (s.username)  document.getElementById('username').value  = s.username;
+  updateButtonStates();
 });
 
 Promise.all([window.hcmAPI.appVersion(), window.hcmAPI.buildDate()]).then(([v, d]) => {
@@ -32,10 +49,7 @@ async function lookup() {
   const resultEl   = document.getElementById('result');
 
   // Basic validation
-  if (!baseUrl || !username || !password || !searchTerm) {
-    showError('All fields are required, including a Person Number or Name.');
-    return;
-  }
+  if (!username || !password || !searchTerm) return;
 
   window.hcmAPI.saveSettings({ baseUrl, username });
   document.getElementById('costCenter').value = '';
@@ -325,6 +339,7 @@ function addToCostCenter(code) {
   }
   existing.push(code);
   field.value = existing.join(', ');
+  updateButtonStates();
   ccResult.className = 'result info';
   ccResult.innerHTML = `${esc(code)} added to the Cost Center Report field (${existing.length} total).`;
 }
@@ -356,6 +371,7 @@ async function lookupHierarchy(costCenterCode) {
   const existing = field.value.split(',').map(s => s.trim()).filter(Boolean);
   const merged   = [...new Set([...existing, ...result.values])];
   field.value    = merged.join(', ');
+  updateButtonStates();
   ccResult.className = 'result info';
   ccResult.innerHTML = `${result.values.length} cost center${result.values.length !== 1 ? 's' : ''} merged into the Cost Center Report field (${merged.length} total).`;
 }
