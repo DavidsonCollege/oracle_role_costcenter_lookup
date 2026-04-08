@@ -1,10 +1,12 @@
 {
   "name": "oracle-access-request-lookup",
-  "version": "1.2.3",
+  "version": "1.2.4",
   "description": "Oracle Access Request Lookup desktop app",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
+    "prebuild:mac": "node -e \"require('fs').writeFileSync('build-date.json', JSON.stringify({date: new Date().toISOString().slice(0,10)}))\"",
+    "prebuild:win": "node -e \"require('fs').writeFileSync('build-date.json', JSON.stringify({date: new Date().toISOString().slice(0,10)}))\"",
     "build:mac": "electron-builder --mac",
     "build:win": "electron-builder --win",
     "build": "electron-builder --mac --win"
@@ -24,6 +26,7 @@
       "preload.js",
       "renderer.js",
       "index.html",
+      "build-date.json",
       "assets/**",
       "node_modules/xlsx/**",
       "node_modules/electron-updater/**"

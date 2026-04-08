@@ -68,6 +68,15 @@ function settingsPath() {
 
 ipcMain.handle('app:version', () => app.getVersion());
 
+ipcMain.handle('app:buildDate', () => {
+  try {
+    const p = path.join(__dirname, 'build-date.json');
+    return JSON.parse(fs.readFileSync(p, 'utf8')).date ?? null;
+  } catch {
+    return null;
+  }
+});
+
 ipcMain.handle('hcm:getSettings', () => {
   try {
     return JSON.parse(fs.readFileSync(settingsPath(), 'utf8'));

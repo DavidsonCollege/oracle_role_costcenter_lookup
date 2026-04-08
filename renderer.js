@@ -8,8 +8,9 @@ window.hcmAPI.getSettings().then(s => {
   if (s.username)  document.getElementById('username').value  = s.username;
 });
 
-window.hcmAPI.appVersion().then(v => {
-  document.getElementById('appVersion').textContent = `v${v}`;
+Promise.all([window.hcmAPI.appVersion(), window.hcmAPI.buildDate()]).then(([v, d]) => {
+  const date = d ? ` — released ${d}` : '';
+  document.getElementById('appVersion').textContent = `v${v}${date}`;
 });
 
 document.getElementById('costCenter').addEventListener('keydown', e => {

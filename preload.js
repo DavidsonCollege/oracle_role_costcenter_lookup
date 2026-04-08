@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('hcmAPI', {
   ccReport    : (params) => ipcRenderer.invoke('hcm:ccreport',     params),
   ccHierarchy : (params) => ipcRenderer.invoke('hcm:ccHierarchy',  params),
   appVersion  : ()       => ipcRenderer.invoke('app:version'),
+  buildDate   : ()       => ipcRenderer.invoke('app:buildDate'),
   getSettings : ()       => ipcRenderer.invoke('hcm:getSettings'),
   saveSettings: (params) => ipcRenderer.invoke('hcm:saveSettings', params),
 });

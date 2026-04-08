@@ -7,3 +7,4 @@ dist/
 out/
 *.zip
 .claude/
+build-date.json
