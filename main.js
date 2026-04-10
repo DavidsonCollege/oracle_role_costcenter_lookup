@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const fs   = require('fs');
@@ -27,9 +27,22 @@ app.whenReady().then(() => {
 
   // Only check for updates in a packaged build, not during development.
   if (app.isPackaged) {
-    // Mac and Windows: full auto-update supported now that Mac builds are code-signed.
+    // Mac and Windows: full auto-update. Use a dialog instead of system notifications
+    // since macOS requires explicit notification permission which new installs won't have.
     autoUpdater.on('error', err => console.error('[updater] error:', err.message));
-    autoUpdater.checkForUpdatesAndNotify();
+    autoUpdater.on('update-downloaded', () => {
+      dialog.showMessageBox({
+        type: 'info',
+        title: 'Update Ready',
+        message: 'A new version has been downloaded.',
+        detail: 'Restart the application now to apply the update.',
+        buttons: ['Restart Now', 'Later'],
+        defaultId: 0,
+      }).then(({ response }) => {
+        if (response === 0) autoUpdater.quitAndInstall();
+      });
+    });
+    autoUpdater.checkForUpdates();
   }
 
   app.on('activate', () => {
