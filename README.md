@@ -29,6 +29,8 @@ Electron desktop app for looking up Oracle HCM worker positions, assigned securi
 
 ## Setting Up for a New Oracle Instance
 
+`PROJECT_NOTES.txt` in the repository root contains a full technical reference — API details, SOAP gotchas, report column names, IPC patterns, and deployment notes useful for anyone developing or adapting this app.
+
 ### Prerequisites
 
 - Node.js 18 or later

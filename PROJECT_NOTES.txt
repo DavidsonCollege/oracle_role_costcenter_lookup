@@ -12,10 +12,14 @@ auto-provisioning rules, and cost center manager information.
 Files:
   main.js       — Electron main process; all API calls live here
   preload.js    — Context bridge exposing IPC to the renderer
-  index.html    — Single-page UI (HTML/CSS/JS, no framework)
+  index.html    — Single-page UI markup and styles (no inline scripts)
+  renderer.js   — All UI logic (loaded via <script src="renderer.js">)
   package.json  — Build config for electron-builder
   assets/       — App icons (icon.icns for Mac, icon.ico for Windows)
+  build-date.json        — Written at build time by prebuild:mac/prebuild:win scripts
+  entitlements.mac.plist — Required for Mac hardened runtime
   .github/workflows/build.yml — GitHub Actions release pipeline
+  control-budget-app/    — Standalone stripped-down app for Control Budget report only
 
 
 ORACLE HCM REST API
@@ -54,9 +58,6 @@ Key endpoints used:
     - Returns: RoleCode, CreationDate, LastUpdateDate
     - Only DAV_SEC_* and *REPORTS* role codes are returned — other roles
       (HR, payroll, etc.) are filtered out as irrelevant to access reviews.
-
-  /roleProvisioningRules  (not yet implemented — future candidate)
-    - Can filter auto-provisioning rules by position code
 
 
 ORACLE HCM SOAP API (PublicReportService)
@@ -107,7 +108,6 @@ Known report column names (upper-cased after normalisation):
   Cost Center report:
     COST CENTER, COST_CENTER        — cost center number
     DEPARTMENT NAME, DEPT NAME      — department name
-    DEPARTMENT STATUS, DEPT STATUS  — department status
     COST CENTER MANAGER, CC MANAGER — manager name
     CC MANAGER STATUS, MANAGER STATUS
     COST_CENTER_MGR_EMAIL           — manager email
@@ -135,7 +135,7 @@ In the Assigned Roles table, DAV_SEC_* role codes are rendered as clickable link
       SOAP report and merges all matching child cost centers into the Cost
       Center Report field (deduplicates with any values already present).
 
-  DAV_SEC_<other>  (e.g. DAV_SEC_1234)
+  DAV_SEC_<digits>  (e.g. DAV_SEC_1234)
     — Direct cost center code. Clicking appends the segment after DAV_SEC_
       to the Cost Center Report field if not already present.
 
@@ -180,67 +180,124 @@ ELECTRON-BUILDER PACKAGING
 ---------------------------
 package.json "build" key controls packaging.
 
-Mac:     "target": [{ "target": "dmg", "arch": ["universal"] }]
-         universal = single DMG that runs on both Intel and Apple Silicon
+Mac:     "target": [
+           { "target": "dmg", "arch": ["universal"] },
+           { "target": "zip", "arch": ["universal"] }
+         ]
+         Both targets are required: DMG for initial install, ZIP for auto-updates.
+         universal = single artifact that runs on both Intel and Apple Silicon.
+         hardenedRuntime: true, notarize: true — required for signing/notarization.
          Icon:  assets/icon.icns
 
 Windows: "target": [{ "target": "nsis", "arch": ["x64"] }]
          NSIS produces a standard .exe installer
          oneClick: false — lets users choose install directory
-         Icon:  assets/icon.ico
+         Icon:  assets/icon.ico  (must be at least 256x256)
 
-Build commands:
-  npm run build:mac   — Mac DMG only
-  npm run build:win   — Windows installer only
+Build commands (local only — do not use with --publish in production):
+  npm run build:mac   — Mac only
+  npm run build:win   — Windows only
   npm run build       — both
 
 Cross-platform builds: handled automatically by GitHub Actions (see DEPLOYMENT
 section below). No Wine or Windows machine required.
 
 Files array must explicitly include all runtime dependencies:
-  "files": ["main.js", "preload.js", "index.html", "assets/**",
+  "files": ["main.js", "preload.js", "renderer.js", "index.html",
+            "build-date.json", "assets/**",
             "node_modules/xlsx/**", "node_modules/electron-updater/**"]
   electron-builder does NOT auto-include node_modules unless specified here.
+  Forgetting renderer.js breaks the UI in packaged builds.
 
 
 DEPLOYMENT & AUTO-UPDATES
 --------------------------
 Releases are built and published via GitHub Actions (.github/workflows/build.yml).
-The workflow triggers on any v* tag push and runs two parallel jobs:
-  - macos-latest  → universal DMG
-  - windows-latest → NSIS .exe
-Both are published as assets on a GitHub Release using the built-in GH_TOKEN.
+The workflow triggers on any v* tag push and runs three jobs:
+  1. create-release (ubuntu-latest) — pre-creates the GitHub Release
+  2. build on macos-latest  → universal DMG + ZIP, signed and notarized
+  3. build on windows-latest → NSIS .exe
+Jobs 2 and 3 run in parallel after job 1 completes. Pre-creating the release
+in a separate job prevents both build jobs from racing to create it (which
+causes a 422 error for whichever finishes second).
+
+Both platforms are published as assets on the GitHub Release using GH_TOKEN.
 
 To release a new version:
   1. Bump "version" in package.json (semver: patch for fixes, minor for features)
-  2. git add package.json && git commit -m "v1.x.x"
-  3. git tag v1.x.x && git push origin main --tags
+  2. Commit and push main FIRST:
+       git add package.json && git commit -m "v1.x.x"
+       git push origin main
+  3. Then create and push the tag:
+       git tag v1.x.x && git push origin v1.x.x
+
+  IMPORTANT: push main before the tag. GitHub uses the workflow file from the
+  commit the tag points to. If the tag is pushed at the same time as workflow
+  changes, it may point to the old workflow.
+
+  Never use --publish always locally after pushing the tag — the release already
+  exists on GitHub and the local build will fail with 422.
 
 First-time setup: repo → Settings → Actions → General →
   set Workflow permissions to "Read and write permissions".
 
 Auto-update behaviour (electron-updater, runtime dependency):
-  Windows: checkForUpdatesAndNotify() — downloads and installs automatically;
-           user is prompted to restart.
-  Mac:     autoDownload=false + update-available event — shows a native dialog
-           with a Download button (opens GitHub releases page) and a Later button.
-           Mac cannot auto-install because electron-updater requires a signed
-           build to replace a running app on macOS.
+  Both platforms: autoDownload=true. The updater downloads silently in the
+  background, then fires the 'update-downloaded' event.
 
-Update check runs inside an app.isPackaged guard so it is skipped during
-development (npm start).
+  Windows: full auto-update via checkForUpdatesAndNotify() — user is prompted
+           to restart when the download is complete.
 
-Code signing: NOT currently configured.
-  Without signing:
-    Mac:     first launch requires right-click → Open to bypass Gatekeeper
-    Windows: SmartScreen shows "unknown publisher" warning on install
-  Adding signing later requires no code changes — electron-builder handles it
-  via environment variables (Apple Developer cert for Mac, CA cert for Windows).
+  Mac:     autoDownload=true + update-downloaded event → Electron dialog.showMessageBox
+           with "Restart Now" / "Later" buttons → autoUpdater.quitAndInstall()
+           on confirm. Full auto-update works because builds are code-signed.
+
+  Mac auto-update requirements — ALL of these must be true:
+    1. Code-signed and notarized build (Developer ID Application certificate)
+    2. ZIP target in Mac build config (electron-updater uses the zip, not the DMG)
+    3. autoDownload = true set before calling checkForUpdates()
+    4. update-downloaded listener registered before calling checkForUpdates()
+
+  Do NOT use system notifications for Mac update alerts — the app may not appear
+  in macOS Notification Center, so notifications are silently dropped.
+  Use dialog.showMessageBox on the update-downloaded event instead.
+
+  Update check runs inside an app.isPackaged guard so it is skipped during
+  development (npm start).
+
+Code signing — Mac (configured):
+  Signed and notarized via GitHub Actions using a Developer ID Application cert.
+  Certificate and credentials are stored as GitHub Secrets:
+    APPLE_CERT               — base64-encoded .p12 (run: base64 -i cert.p12 | pbcopy)
+    APPLE_CERT_PASSWORD      — export password (type manually — do NOT paste;
+                               pasting can introduce hidden characters)
+    APPLE_ID                 — Apple ID email
+    APPLE_APP_SPECIFIC_PASSWORD — from appleid.apple.com
+    APPLE_TEAM_ID            — 10-character team ID from developer.apple.com
+
+  Certificate gotchas:
+    - Developer ID Application certs can only be created by the Account Holder
+      on the Apple Developer account. Admin role is not sufficient.
+    - CSR must be generated on the same Mac where the .p12 will be exported.
+      If the .cer is downloaded on a different Mac, the private key is absent
+      and import fails with error -25294.
+    - Wrong password errors despite correct password: likely hidden characters
+      in the GitHub secret — delete and retype manually.
+
+  Supporting files:
+    entitlements.mac.plist — enables JIT, unsigned executable memory, network
+                             client access (required for hardened runtime)
+
+Code signing — Windows (not yet configured):
+  SmartScreen shows "unknown publisher" warning on install; users click
+  More info → Run anyway. Requires a certificate from DigiCert or Sectigo.
 
 
-UI PATTERNS (index.html)
-------------------------
-- Single self-contained HTML file (no build step, no framework)
+UI PATTERNS
+-----------
+- index.html — markup and styles only; no inline scripts or event handlers
+- renderer.js — all UI logic; loaded via <script src="renderer.js">
+  (kept separate from HTML for CSP compliance)
 - CSS uses system font stack: -apple-system, BlinkMacSystemFont, "Segoe UI"
 - Oracle red brand color: #c74634
 - Result areas are hidden (display:none) until populated, then toggled with
@@ -250,13 +307,19 @@ UI PATTERNS (index.html)
   function that escapes &, <, >, " — required on every innerHTML write to
   prevent XSS from API response content
 - Enter key on any field triggers the relevant action via keydown listeners
+- Button clicks wired with addEventListener — no onclick attributes in HTML
+- Dynamic rows (candidates, role links) use data-* attributes + delegated
+  event listeners — no inline onclick
+- Buttons are disabled when required fields are empty (updateButtonStates()).
+  Call updateButtonStates() after any programmatic field value change, not
+  just after user input events.
 
 
 DEPENDENCIES
 ------------
   xlsx (SheetJS) ^0.18.5      — in-memory Excel parsing, no temp files needed
   electron-updater ^6.8.3     — auto-update support (runtime dependency)
-  electron ^40.6.0            — (devDependency)
-  electron-builder ^26.8.1    — (devDependency)
+  electron ^40.6.0            — desktop framework (devDependency)
+  electron-builder ^26.8.1    — packaging (devDependency)
 
 fs and path are Node built-ins.
