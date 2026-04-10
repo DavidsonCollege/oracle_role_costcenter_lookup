@@ -44,7 +44,7 @@ jobs:
           APPLE_CERT: ${{ secrets.APPLE_CERT }}
           APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
         run: |
-          echo "$APPLE_CERT" | base64 --decode > certificate.p12
+          printf '%s' "$APPLE_CERT" | base64 --decode > certificate.p12
           security create-keychain -p actions build.keychain
           security default-keychain -s build.keychain
           security unlock-keychain -p actions build.keychain
