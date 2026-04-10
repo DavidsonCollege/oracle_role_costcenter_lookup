@@ -21,22 +21,13 @@ Electron desktop app for looking up Oracle HCM worker positions, assigned securi
 1. Go to **https://github.com/DavidsonCollege/oracle_role_costcenter_lookup/releases**
 2. Under the latest release, download the file ending in `.dmg`
 3. Open the `.dmg` file and drag **Oracle Access Request Lookup** into your Applications folder
-4. On first launch, macOS will block the app because it isn't code-signed. To allow it:
-   - Double-click the app — it will be blocked with a warning
-   - Open **System Settings** → **Privacy & Security**
-   - Scroll to the Security section and click **Open Anyway** next to the message about Oracle Access Request Lookup
-   - Enter your Mac password if prompted, then click **Open Anyway** again
-   - You only need to do this once; future launches work normally
-5. Enter your HCM Base URL, username, and password — the URL and username will be remembered; the password must be re-entered each session
-6. When a new version is available, a notification dialog will appear at startup — click **Download** to open the releases page, then follow steps 2–3 above to update
+4. Launch **Oracle Access Request Lookup** from your Applications folder
+5. Enter your HCM Base URL, username, and password — the URL and username will be remembered next time; the password must be re-entered each session
+6. When a new version is available, the app will download it automatically and show a dialog at startup — click **Restart Now** to apply the update
 
 ---
 
 ## Setting Up for a New Oracle Instance
-
-### Reference
-
-- PROJECT_NOTES.txt provides a technical overview of the application
 
 ### Prerequisites
 
@@ -78,9 +69,9 @@ Open `main.js` and update the three report paths to match where you imported the
 
 | Line | Report |
 |------|--------|
-| 103 | Cost Center Hierarchy |
-| 335 | Cost Center Manager |
-| 403 | Auto-Provisioning Rules |
+| 116 | Cost Center Hierarchy |
+| 352 | Cost Center Manager |
+| 420 | Auto-Provisioning Rules |
 
 Replace the paths with your own, keeping the `.xdo` extension:
 ```js
@@ -152,4 +143,4 @@ Tell Claude: **"commit, push, and build"** (or just **"build"** if changes are a
    git push origin v1.1.0
    ```
 5. GitHub Actions will automatically build both platforms and publish the release — monitor progress at **https://github.com/DavidsonCollege/oracle_role_costcenter_lookup/actions**
-6. Once the workflow completes, Windows users will be prompted to update automatically on their next launch; Mac users will see a notification dialog
+6. Once the workflow completes, users on both Mac and Windows will be prompted to update automatically on their next launch
