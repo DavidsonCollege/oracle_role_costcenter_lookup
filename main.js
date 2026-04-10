@@ -29,7 +29,16 @@ app.whenReady().then(() => {
   if (app.isPackaged) {
     // Mac and Windows: full auto-update. Use a dialog instead of system notifications
     // since macOS requires explicit notification permission which new installs won't have.
-    autoUpdater.on('error', err => console.error('[updater] error:', err.message));
+    autoUpdater.autoDownload = true;
+    autoUpdater.on('error', err => {
+      dialog.showMessageBox({
+        type: 'error',
+        title: 'Update Error',
+        message: 'An error occurred while checking for updates.',
+        detail: err.message,
+        buttons: ['OK'],
+      });
+    });
     autoUpdater.on('update-downloaded', () => {
       dialog.showMessageBox({
         type: 'info',
