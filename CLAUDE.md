@@ -266,9 +266,13 @@ First-time setup: repo → Settings → Actions → General → set Workflow per
 | Platform | Behaviour |
 |----------|-----------|
 | **Windows** | `checkForUpdatesAndNotify()` — downloads and installs silently; user is prompted to restart |
-| **Mac** | `autoDownload = false` + `update-available` event — shows a native `dialog.showMessageBox` with **Download** (opens releases page) and **Later** buttons |
+| **Mac** | `checkForUpdatesAndNotify()` — full auto-update now that builds are code-signed |
 
-Mac cannot auto-install because `electron-updater` requires a code-signed build to replace a running app on macOS. This is a known limitation until code signing is added.
+**Important:** register the `update-available` event listener **before** calling `checkForUpdates()` — if the listener is registered after, it may miss the event if the check resolves quickly.
+
+**Parallel build race condition:** the `create-release` job runs first to pre-create the GitHub Release, then both Mac and Windows build jobs run in parallel and upload to it. Without this, both jobs race to create the release and one fails with 422. If a release is retagged multiple times, the DMG may upload to a mismatched release — bump to a new version for a clean build in that case.
+
+**Update dialog URL:** the Download button in the update notification opens the releases page. If the repo moves, update the URL in `main.js` in the `autoUpdater.on('update-available')` handler. (Currently using `checkForUpdatesAndNotify()` which handles this automatically.)
 
 ### Code signing (Mac — configured)
 
