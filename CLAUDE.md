@@ -266,13 +266,24 @@ First-time setup: repo → Settings → Actions → General → set Workflow per
 | Platform | Behaviour |
 |----------|-----------|
 | **Windows** | `checkForUpdatesAndNotify()` — downloads and installs silently; user is prompted to restart |
-| **Mac** | `checkForUpdatesAndNotify()` — full auto-update now that builds are code-signed |
+| **Mac** | `autoDownload = true` + `update-downloaded` event → Electron `dialog.showMessageBox` with Restart Now / Later buttons → `autoUpdater.quitAndInstall()` |
 
-**Important:** register the `update-available` event listener **before** calling `checkForUpdates()` — if the listener is registered after, it may miss the event if the check resolves quickly.
+**Mac auto-update requirements — all four must be true:**
+1. **Code-signed and notarized build** — unsigned builds cannot be auto-updated by macOS.
+2. **`.zip` target in Mac build config** — electron-updater uses the `.zip` to deliver updates; the DMG is for initial install only. Both must be present in `package.json`:
+   ```json
+   "target": [
+     { "target": "dmg", "arch": ["universal"] },
+     { "target": "zip", "arch": ["universal"] }
+   ]
+   ```
+   Omitting the zip target causes a "ZIP file not provided" error at runtime when the updater tries to apply the update.
+3. **`autoDownload = true`** — set explicitly before calling `checkForUpdates()`.
+4. **`update-downloaded` event listener registered before `checkForUpdates()`** — if registered after, the event may be missed if the check resolves quickly.
+
+**Do not use system notifications for update alerts on Mac** — the app may not appear in macOS Notification Center, so notifications are silently dropped. Use `dialog.showMessageBox` on the `update-downloaded` event instead.
 
 **Parallel build race condition:** the `create-release` job runs first to pre-create the GitHub Release, then both Mac and Windows build jobs run in parallel and upload to it. Without this, both jobs race to create the release and one fails with 422. If a release is retagged multiple times, the DMG may upload to a mismatched release — bump to a new version for a clean build in that case.
-
-**Update dialog URL:** the Download button in the update notification opens the releases page. If the repo moves, update the URL in `main.js` in the `autoUpdater.on('update-available')` handler. (Currently using `checkForUpdatesAndNotify()` which handles this automatically.)
 
 ### Code signing (Mac — configured)
 
