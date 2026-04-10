@@ -270,13 +270,32 @@ First-time setup: repo → Settings → Actions → General → set Workflow per
 
 Mac cannot auto-install because `electron-updater` requires a code-signed build to replace a running app on macOS. This is a known limitation until code signing is added.
 
-### Code signing (not yet configured)
+### Code signing (Mac — configured)
 
-Without code signing:
-- **Mac:** first launch requires right-click → Open to bypass Gatekeeper; subsequent launches are normal
-- **Windows:** SmartScreen shows an "unknown publisher" warning on install; users click More info → Run anyway
+Mac builds are signed and notarized via GitHub Actions using a Developer ID Application certificate. The workflow imports the certificate from GitHub Secrets, signs the app, and notarizes with Apple before publishing.
 
-Adding code signing later requires an Apple Developer account (Mac) and a certificate from a CA such as DigiCert or Sectigo (Windows). `electron-builder` handles the signing and notarization steps via environment variables — no code changes needed.
+**Required GitHub Secrets:**
+| Secret | Value |
+|--------|-------|
+| `APPLE_CERT` | Base64-encoded `.p12` certificate — run `base64 -i your-cert.p12 \| pbcopy` in Terminal. Must have no trailing carriage return or newline — delete and recreate the secret if any appear when pasting. |
+| `APPLE_CERT_PASSWORD` | Password set when exporting the `.p12` — **type this manually** when creating the secret, do not paste. Pasting can introduce hidden characters that cause "wrong password" errors. |
+| `APPLE_ID` | Apple ID email address |
+| `APPLE_APP_SPECIFIC_PASSWORD` | App-specific password from appleid.apple.com |
+| `APPLE_TEAM_ID` | 10-character team ID from developer.apple.com |
+
+**Certificate gotchas:**
+- Developer ID Application certificates can only be created by the **Account Holder** on the Apple Developer account — Admin role is not sufficient.
+- The CSR must be generated on the same Mac where the `.p12` will be exported from. If the CSR is generated on one Mac and the `.cer` downloaded on another, the private key won't be present and import will fail with error -25294.
+- If the certificate import fails with "wrong password" even after verifying the password is correct, the issue is likely hidden characters in the secret — retype the password manually.
+- `APPLE_CERT` base64 with line breaks (default `base64` output) works correctly — do not strip newlines with `tr -d '\n'`.
+
+**Supporting files:**
+- `entitlements.mac.plist` — required for hardened runtime; enables JIT, unsigned executable memory, and network client access.
+- `package.json` mac build config includes `hardenedRuntime: true`, `notarize: true`, and references the entitlements file.
+
+### Code signing (Windows — not yet configured)
+
+SmartScreen shows an "unknown publisher" warning on install; users click More info → Run anyway. Adding Windows code signing requires a certificate from a CA such as DigiCert or Sectigo.
 
 ---
 
