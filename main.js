@@ -191,7 +191,11 @@ async function fetchWithTimeout(url, options = {}, ms = 30000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ms);
   try {
-    return await fetch(url, { ...options, signal: controller.signal });
+    // Connection: close prevents the HTTP client from reusing cached TCP connections.
+    // Without this, connecting to VPN mid-session has no effect because requests
+    // continue using the pre-VPN connection from the pool.
+    const headers = { 'Connection': 'close', ...(options.headers ?? {}) };
+    return await fetch(url, { ...options, headers, signal: controller.signal });
   } catch (err) {
     if (err.name === 'AbortError') throw new Error(`Request timed out after ${ms / 1000}s`);
     throw err;
@@ -450,7 +454,7 @@ async function getWorkerInfo(baseUrl, username, password, personNumber) {
   const data = await response.json();
 
   if (!data.items || data.items.length === 0) {
-    throw new Error(`No worker found with Person Number: ${personNumber}`);
+    throw new Error(`Person Number ${personNumber} was found but could not be retrieved — your account may not have permission to look up this worker, or you may not be connected to the required network.`);
   }
 
   const worker = data.items[0];
