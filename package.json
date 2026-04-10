@@ -1,6 +1,6 @@
 {
   "name": "oracle-access-request-lookup",
-  "version": "1.2.6",
+  "version": "1.2.7",
   "description": "Oracle Access Request Lookup desktop app",
   "main": "main.js",
   "scripts": {
@@ -12,7 +12,7 @@
     "build": "electron-builder --mac --win"
   },
   "build": {
-    "appId": "com.yourorg.oracle-access-request-lookup",
+    "appId": "edu.davidson.oracle-access-request-lookup",
     "productName": "Oracle Access Request Lookup",
     "icon": "assets/icon",
     "publish": {
@@ -34,6 +34,11 @@
     "mac": {
       "category": "public.app-category.business",
       "icon": "assets/icon.icns",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "entitlements.mac.plist",
+      "entitlementsInherit": "entitlements.mac.plist",
+      "notarize": true,
       "target": [
         {
           "target": "dmg",
