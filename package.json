@@ -1,6 +1,6 @@
 {
   "name": "oracle-access-request-lookup",
-  "version": "1.2.8",
+  "version": "1.2.9",
   "description": "Oracle Access Request Lookup desktop app",
   "main": "main.js",
   "scripts": {

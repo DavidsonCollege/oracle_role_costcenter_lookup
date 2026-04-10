@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const fs   = require('fs');
@@ -27,27 +27,9 @@ app.whenReady().then(() => {
 
   // Only check for updates in a packaged build, not during development.
   if (app.isPackaged) {
-    if (process.platform === 'darwin') {
-      // Mac: can't auto-install without code signing — check and notify manually.
-      autoUpdater.autoDownload = false;
-      autoUpdater.on('error', err => console.error('[updater] error:', err.message));
-      autoUpdater.on('update-available', info => {
-        dialog.showMessageBox({
-          type: 'info',
-          title: 'Update Available',
-          message: `Version ${info.version} is available.`,
-          detail: 'Download the new version from GitHub and replace the app in your Applications folder.',
-          buttons: ['Download', 'Later'],
-          defaultId: 0,
-        }).then(({ response }) => {
-          if (response === 0) shell.openExternal('https://github.com/DavidsonCollege/oracle_role_costcenter_lookup/releases/latest');
-        });
-      });
-      autoUpdater.checkForUpdates();
-    } else {
-      // Windows: full auto-update supported.
-      autoUpdater.checkForUpdatesAndNotify();
-    }
+    // Mac and Windows: full auto-update supported now that Mac builds are code-signed.
+    autoUpdater.on('error', err => console.error('[updater] error:', err.message));
+    autoUpdater.checkForUpdatesAndNotify();
   }
 
   app.on('activate', () => {
