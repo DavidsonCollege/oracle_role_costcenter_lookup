@@ -72,6 +72,8 @@ function settingsPath() {
 
 ipcMain.handle('app:version', () => app.getVersion());
 
+ipcMain.handle('app:relaunch', () => { app.relaunch(); app.quit(); });
+
 ipcMain.handle('app:buildDate', () => {
   try {
     const p = path.join(__dirname, 'build-date.json');
@@ -187,21 +189,18 @@ ipcMain.handle('hcm:lookup', async (_event, { baseUrl, username, password, searc
       resolvedPersonNumber = candidates[0].personNumber;
     }
 
-    const { positionCode, positionName, personId, personNumber, displayName, legalName, preferredName } =
+    const { assignments, positionCode, personId, personNumber, displayName, legalName, preferredName } =
       await getWorkerInfo(baseUrl, username, password, resolvedPersonNumber);
 
-    // Fetch assigned roles and auto-provisioning rules in parallel.
-    const [rolesResult, autoProvResult] = await Promise.allSettled([
+    // Fetch assigned roles only — auto-provisioning rules are loaded on demand.
+    const rolesResult = await Promise.allSettled([
       getAssignedRoles(baseUrl, username, password, personId),
-      runAutoProvisioningReport(baseUrl, username, password, positionCode),
     ]);
 
-    const provisioningRules = rolesResult.status === 'fulfilled' ? rolesResult.value : [];
-    const rulesError        = rolesResult.status === 'rejected'  ? rolesResult.reason.message : null;
-    const autoProvRules     = autoProvResult.status === 'fulfilled' ? autoProvResult.value : [];
-    const autoProvError     = autoProvResult.status === 'rejected'  ? autoProvResult.reason.message : null;
+    const provisioningRules = rolesResult[0].status === 'fulfilled' ? rolesResult[0].value : [];
+    const rulesError        = rolesResult[0].status === 'rejected'  ? rolesResult[0].reason.message : null;
 
-    return { ok: true, positionCode, positionName, provisioningRules, rulesError, autoProvRules, autoProvError, personNumber, displayName, legalName, preferredName };
+    return { ok: true, assignments, positionCode, provisioningRules, rulesError, personNumber, personId, displayName, legalName, preferredName };
   } catch (err) {
     return { ok: false, error: `Worker lookup failed: ${err.message}` };
   }
@@ -213,9 +212,6 @@ async function fetchWithTimeout(url, options = {}, ms = 30000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ms);
   try {
-    // Connection: close prevents the HTTP client from reusing cached TCP connections.
-    // Without this, connecting to VPN mid-session has no effect because requests
-    // continue using the pre-VPN connection from the pool.
     const headers = { 'Connection': 'close', ...(options.headers ?? {}) };
     return await fetch(url, { ...options, headers, signal: controller.signal });
   } catch (err) {
@@ -408,6 +404,20 @@ async function runCostCenterReport(baseUrl, username, password, costCenters) {
   });
 }
 
+// ── IPC: hcm:autoProvRules ───────────────────────────────────────────────────
+//
+// Fetches auto-provisioning rules for a given position code on demand.
+// Returns { ok: true, autoProvRules: [...] } | { ok: false, error: '...' }
+
+ipcMain.handle('hcm:autoProvRules', async (_event, { baseUrl, username, password, positionCode }) => {
+  try {
+    const rules = await runAutoProvisioningReport(baseUrl, username, password, positionCode);
+    return { ok: true, autoProvRules: rules };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
 // ── Auto-provisioning rules report (SOAP 1.1 → PublicReportService) ──────────
 //
 // Report: /Custom/Jessamyn/Auto-Provisioning Rules/Auto-Provisioning Rules.xdo
@@ -448,15 +458,17 @@ async function runAutoProvisioningReport(baseUrl, username, password, positionCo
 
 // ── Worker lookup ─────────────────────────────────────────────────────────────
 //
-// Returns { positionCode, positionName, personId, personNumber,
+// Returns { assignments, positionCode, personId, personNumber,
 //           displayName, legalName, preferredName } for the given person number.
+// assignments: [{ positionCode, positionName, isPrimary, managerName, managerNumber }]
+// positionCode: primary assignment's code (for roles/auto-prov use)
 
 async function getWorkerInfo(baseUrl, username, password, personNumber) {
   const token = Buffer.from(`${username}:${password}`).toString('base64');
 
   const params = new URLSearchParams({
     q: `PersonNumber=${personNumber}`,
-    expand: 'names,workRelationships,workRelationships.assignments',
+    expand: 'names,workRelationships,workRelationships.assignments,workRelationships.assignments.managers',
   });
 
   const url = `${baseUrl}/hcmRestApi/resources/latest/workers?${params}`;
@@ -511,41 +523,91 @@ async function getWorkerInfo(baseUrl, username, password, personNumber) {
     throw new Error(`No work relationships found for Person Number: ${personNumber}`);
   }
 
-  // Find the best matching assignment (prefer active primary, fall back to any with a code).
-  let chosen = null;
-
+  // Collect all active assignments, deduplicated by PositionCode.
+  // Temporary/hourly workers often accumulate one assignment record per contract
+  // period, all with the same PositionCode — showing them all is not useful.
+  // Keep the primary assignment if there's a collision; otherwise keep the first seen.
+  const seenPositions = new Map(); // PositionCode -> assignment object
   for (const rel of relationships) {
-    for (const assignment of rel.assignments ?? []) {
-      if (
-        assignment.PrimaryFlag === true &&
-        assignment.AssignmentStatusType === 'ACTIVE' &&
-        assignment.PositionCode
-      ) {
-        chosen = assignment;
-        break;
+    for (const a of rel.assignments ?? []) {
+      if (a.AssignmentStatusType === 'ACTIVE' && a.PositionCode) {
+        const existing = seenPositions.get(a.PositionCode);
+        if (!existing || (!existing.PrimaryFlag && a.PrimaryFlag)) {
+          seenPositions.set(a.PositionCode, a);
+        }
       }
     }
-    if (chosen) break;
   }
+  let activeAssignments = [...seenPositions.values()];
 
-  if (!chosen) {
+  // Fall back to any assignment with a position code if none are active.
+  if (activeAssignments.length === 0) {
+    const fallbackSeen = new Map();
     for (const rel of relationships) {
-      for (const assignment of rel.assignments ?? []) {
-        if (assignment.PositionCode) { chosen = assignment; break; }
+      for (const a of rel.assignments ?? []) {
+        if (a.PositionCode && !fallbackSeen.has(a.PositionCode)) {
+          fallbackSeen.set(a.PositionCode, a);
+        }
       }
-      if (chosen) break;
     }
+    activeAssignments = [...fallbackSeen.values()];
   }
 
-  if (!chosen) throw new Error(`No position code found for Person Number: ${personNumber}`);
+  if (activeAssignments.length === 0) {
+    throw new Error(`No position code found for Person Number: ${personNumber}`);
+  }
 
-  const positionCode = chosen.PositionCode;
+  // Oracle's managers expand only includes ManagerAssignmentNumber (e.g. "E800753987-2"),
+  // not the manager's display name. Extract the person number by stripping the leading
+  // letter prefix and trailing "-N" sequence number.
+  const getMgrAssignment = a =>
+    (a.managers ?? []).find(m => m.ManagerType === 'LINE_MANAGER') ?? (a.managers ?? [])[0] ?? null;
+  const getMgrPersonNumber = a => {
+    const an = getMgrAssignment(a)?.ManagerAssignmentNumber ?? null;
+    if (!an) return null;
+    const m = an.match(/^[A-Z]*(\d+?)(?:-\d+)?$/);
+    return m?.[1] ?? null;
+  };
 
-  // PositionName is not populated in the assignments expand — fetch it from the
-  // positions resource using the position code.
-  const positionName = await fetchPositionName(baseUrl, token, positionCode);
+  // Fetch position names and manager display names in parallel.
+  const uniqueMgrNums = [...new Set(activeAssignments.map(getMgrPersonNumber).filter(Boolean))];
+  const mgrNameMap = new Map(); // personNumber -> displayName
 
-  return { positionCode, positionName, personId, personNumber, displayName, legalName, preferredName };
+  const [positionNames] = await Promise.all([
+    Promise.all(activeAssignments.map(a => fetchPositionName(baseUrl, token, a.PositionCode))),
+    Promise.all(uniqueMgrNums.map(async pn => {
+      const headers = { Authorization: `Basic ${token}`, 'Content-Type': 'application/json' };
+      const p = new URLSearchParams({ q: `PersonNumber=${pn}`, limit: '1' });
+      for (const endpoint of ['workers', 'publicWorkers']) {
+        try {
+          const res = await fetchWithTimeout(
+            `${baseUrl}/hcmRestApi/resources/latest/${endpoint}?${p}`,
+            { headers }
+          );
+          if (!res.ok) continue;
+          const d = await res.json();
+          const name = d.items?.[0]?.DisplayName ?? null;
+          if (name) { mgrNameMap.set(pn, name); break; }
+        } catch { /* try next endpoint */ }
+      }
+    })),
+  ]);
+
+  const assignments = activeAssignments.map((a, i) => {
+    const pn = getMgrPersonNumber(a);
+    return {
+      positionCode  : a.PositionCode,
+      positionName  : positionNames[i],
+      isPrimary     : a.PrimaryFlag === true,
+      managerName   : pn ? (mgrNameMap.get(pn) ?? null) : null,
+      managerNumber : pn,
+    };
+  });
+
+  // Primary assignment drives role/auto-prov lookups.
+  const primary = assignments.find(a => a.isPrimary) ?? assignments[0];
+
+  return { assignments, positionCode: primary.positionCode, personId, personNumber, displayName, legalName, preferredName };
 }
 
 // Fetches the human-readable name for a position code from the positions resource.
@@ -692,6 +754,9 @@ async function getAssignedRoles(baseUrl, username, password, personId) {
   );
 
   if (!accountRes.ok) {
+    if (accountRes.status === 403) {
+      throw new Error('Could not retrieve security roles — this may require a VPN connection. Connect to the Davidson network and try again.');
+    }
     const body = await accountRes.text().catch(() => '');
     throw new Error(`User accounts API error ${accountRes.status} ${accountRes.statusText}${body ? ': ' + body : ''}`);
   }

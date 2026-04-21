@@ -1,6 +1,7 @@
 // ── Wire up buttons and key listeners ─────────────────────────────────────
 document.getElementById('lookupBtn').addEventListener('click', lookup);
 document.getElementById('ccBtn').addEventListener('click', runCCReport);
+document.getElementById('reconnectBtn').addEventListener('click', () => window.hcmAPI.appRelaunch());
 
 // ── Button enable/disable based on required fields ──────────────────────────
 function updateButtonStates() {
@@ -83,13 +84,12 @@ async function doLookup(baseUrl, username, password, searchTerm) {
   if (!result.ok) throw new Error(result.error);
   if (result.candidates) return { candidates: result.candidates };
   return {
+    assignments      : result.assignments,
     positionCode     : result.positionCode,
-    positionName     : result.positionName,
     provisioningRules: result.provisioningRules,
     rulesError       : result.rulesError,
-    autoProvRules    : result.autoProvRules,
-    autoProvError    : result.autoProvError,
     personNumber     : result.personNumber,
+    personId         : result.personId,
     displayName      : result.displayName,
     legalName        : result.legalName,
     preferredName    : result.preferredName,
@@ -122,7 +122,7 @@ function selectCandidate(personNumber) {
   lookup();
 }
 
-function showSuccess({ personNumber, displayName, legalName, preferredName, positionCode, positionName, provisioningRules, rulesError, autoProvRules, autoProvError }) {
+function showSuccess({ personNumber, personId, displayName, legalName, preferredName, positionCode, assignments, provisioningRules, rulesError }) {
   const el = document.getElementById('result');
   el.className = 'result success';
 
@@ -133,7 +133,7 @@ function showSuccess({ personNumber, displayName, legalName, preferredName, posi
     rulesHtml = `<p class="no-rules">No assigned roles found for this position.</p>`;
   } else {
     rulesHtml = `
-      <table class="rules-table">
+      <table class="rules-table" id="rolesTable">
         <thead>
           <tr>
             <th>Role Code</th>
@@ -184,16 +184,35 @@ function showSuccess({ personNumber, displayName, legalName, preferredName, posi
       <span class="result-key">Person Number</span>
       <span class="result-val">${esc(personNumber)}</span>
     </div>
-    ${nameRow}
     <div class="result-row">
-      <span class="result-key">Position Code</span>
-      <span class="result-val">${esc(positionCode)}</span>
+      <span class="result-key">Person ID</span>
+      <span class="result-val">${esc(personId ?? '—')}</span>
     </div>
-    ${positionName ? `
-    <div class="result-row">
-      <span class="result-key">Position Name</span>
-      <span class="result-val" style="font-family:inherit;letter-spacing:normal">${esc(positionName)}</span>
-    </div>` : ''}
+    ${nameRow}
+    <div class="result-row assignments-row">
+      <span class="result-key">Assignment${assignments.length !== 1 ? 's' : ''}</span>
+      <span class="result-val">
+        <table class="assignments-table">
+          <thead>
+            <tr>
+              <th></th>
+              <th>Position Code</th>
+              <th>Position Name</th>
+              <th>Manager</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${assignments.map(a => `
+              <tr${a.isPrimary ? ' class="assignment-primary"' : ''}>
+                <td class="assignment-flag">${a.isPrimary ? '<span class="primary-badge">Primary</span>' : ''}</td>
+                <td class="mono">${esc(a.positionCode)}</td>
+                <td>${a.positionName ? esc(a.positionName) : '<span style="opacity:0.4">—</span>'}</td>
+                <td>${a.managerName ? esc(a.managerName) + (a.managerNumber ? ` <span style="opacity:0.6">(${esc(a.managerNumber)})</span>` : '') : '<span style="opacity:0.4">—</span>'}</td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </span>
+    </div>
     <div class="rules-section">
       <p class="rules-label">
         Assigned Roles
@@ -201,38 +220,63 @@ function showSuccess({ personNumber, displayName, legalName, preferredName, posi
       </p>
       ${rulesHtml}
     </div>
-    <div class="rules-section">
-      <p class="rules-label">
-        Auto-Provisioning Rules
-        ${!autoProvError ? `<span class="rules-count">${(autoProvRules ?? []).length}</span>` : ''}
+    <div class="rules-section" id="autoProvSection">
+      <p class="rules-label">Auto-Provisioning Rules</p>
+      <p class="no-rules">
+        <button class="btn-load-autoprov" id="loadAutoProvBtn" data-position-code="${esc(positionCode)}">Load Auto-Provisioning Rules</button>
       </p>
-      ${autoProvError
-        ? `<p class="rules-error">&#9888; Could not load auto-provisioning rules: ${esc(autoProvError)}</p>`
-        : (autoProvRules ?? []).length === 0
-          ? `<p class="no-rules">No auto-provisioning rules found for this position.</p>`
-          : (() => {
-              const cols = ['MAPPING_NAME', 'DEPARTMENT', 'JOB', 'ROLE'];
-              return `<table class="rules-table">
-                <thead><tr>${cols.map(h => `<th>${esc(h)}</th>`).join('')}</tr></thead>
-                <tbody>
-                  ${autoProvRules.map(row =>
-                    `<tr>${cols.map(h => `<td class="mono">${esc(row[h] ?? '—')}</td>`).join('')}</tr>`
-                  ).join('')}
-                </tbody>
-              </table>`;
-            })()
-      }
     </div>
 `;
 
   // Delegate role-link clicks to avoid unsafe inline onclick handlers.
-  el.querySelector('tbody')?.addEventListener('click', e => {
+  document.getElementById('rolesTable')?.querySelector('tbody')?.addEventListener('click', e => {
     const link = e.target.closest('.role-link');
     if (!link) return;
     e.preventDefault();
     const { action, code } = link.dataset;
     if (action === 'hierarchy') lookupHierarchy(code);
     else if (action === 'add-cc') addToCostCenter(code);
+  });
+
+  // Load auto-provisioning rules on demand.
+  document.getElementById('loadAutoProvBtn')?.addEventListener('click', async e => {
+    const btn = e.currentTarget;
+    const posCode = btn.dataset.positionCode;
+    const section = document.getElementById('autoProvSection');
+    btn.disabled = true;
+    btn.textContent = 'Loading…';
+
+    const baseUrl  = document.getElementById('baseUrl').value.trim().replace(/\/$/, '');
+    const username = document.getElementById('username').value.trim();
+    const password = document.getElementById('password').value;
+
+    const result = await window.hcmAPI.autoProvRules({ baseUrl, username, password, positionCode: posCode });
+
+    if (!result.ok) {
+      section.querySelector('p.no-rules').innerHTML =
+        `<span class="rules-error">&#9888; Could not load auto-provisioning rules: ${esc(result.error)}</span>`;
+      return;
+    }
+
+    const rules = result.autoProvRules ?? [];
+    const label = section.querySelector('p.rules-label');
+    label.innerHTML = `Auto-Provisioning Rules <span class="rules-count">${rules.length}</span>`;
+
+    if (rules.length === 0) {
+      section.querySelector('p.no-rules').textContent = 'No auto-provisioning rules found for this position.';
+      return;
+    }
+
+    const cols = ['MAPPING_NAME', 'DEPARTMENT', 'JOB', 'ROLE'];
+    section.querySelector('p.no-rules').outerHTML = `
+      <table class="rules-table">
+        <thead><tr>${cols.map(h => `<th>${esc(h)}</th>`).join('')}</tr></thead>
+        <tbody>
+          ${rules.map(row =>
+            `<tr>${cols.map(h => `<td class="mono">${esc(row[h] ?? '—')}</td>`).join('')}</tr>`
+          ).join('')}
+        </tbody>
+      </table>`;
   });
 }
 

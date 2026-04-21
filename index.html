@@ -49,6 +49,19 @@
 
     .oracle-logo svg { width: 22px; height: 22px; fill: #fff; }
 
+    #reconnectBtn {
+      font-size: 0.78rem;
+      padding: 0.3rem 0.75rem;
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      background: #fff;
+      color: #6b7280;
+      cursor: pointer;
+      font-family: inherit;
+      flex-shrink: 0;
+    }
+    #reconnectBtn:hover { background: #f9fafb; border-color: #9ca3af; color: #374151; }
+
     .card-header h1 {
       font-size: 1.25rem;
       font-weight: 600;
@@ -283,6 +296,64 @@
       font-style: italic;
     }
 
+    .assignments-row { align-items: flex-start; }
+    .assignments-row .result-key { padding-top: 0.4rem; }
+    .assignments-row .result-val { flex: 1; }
+
+    .assignments-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.85rem;
+    }
+
+    .assignments-table th {
+      text-align: left;
+      font-weight: 600;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: #666;
+      padding: 0.3rem 0.6rem 0.3rem 0;
+      border-bottom: 1px solid #e5e7eb;
+    }
+
+    .assignments-table td {
+      padding: 0.4rem 0.6rem 0.4rem 0;
+      border-bottom: 1px solid #f3f4f6;
+      vertical-align: top;
+    }
+
+    .assignments-table tr:last-child td { border-bottom: none; }
+
+    .assignment-primary td { background: #fafff8; }
+
+    .assignment-flag { width: 4rem; }
+
+    .primary-badge {
+      display: inline-block;
+      font-size: 0.7rem;
+      font-weight: 600;
+      color: #166534;
+      background: #dcfce7;
+      border-radius: 4px;
+      padding: 0.1rem 0.4rem;
+      letter-spacing: 0.02em;
+    }
+
+    .btn-load-autoprov {
+      font-size: 0.82rem;
+      padding: 0.3rem 0.75rem;
+      border: 1px solid #c74634;
+      border-radius: 6px;
+      background: #fff;
+      color: #c74634;
+      cursor: pointer;
+      font-family: inherit;
+    }
+
+    .btn-load-autoprov:hover:not(:disabled) { background: #fdf0ee; }
+    .btn-load-autoprov:disabled { opacity: 0.5; cursor: default; }
+
     .rules-error {
       font-size: 0.8rem;
       color: #92400e;
@@ -411,10 +482,11 @@
           <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm0-14c-3.31 0-6 2.69-6 6s2.69 6 6 6 6-2.69 6-6-2.69-6-6-6zm0 10c-2.21 0-4-1.79-4-4s1.79-4 4-4 4 1.79 4 4-1.79 4-4 4z"/>
         </svg>
       </div>
-      <div>
+      <div style="flex:1">
         <h1>Oracle Access Request Lookup</h1>
         <p>Look up worker positions, assigned security roles, auto-provisioning rules, and cost center managers</p>
       </div>
+      <button id="reconnectBtn" title="Restart the app to reset network connections">Reconnect</button>
     </div>
 
     <p class="section-label">Connection &amp; Credentials</p>
