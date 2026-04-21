@@ -143,7 +143,7 @@ const result = await window.hcmAPI.methodName(params)
 ```
 The UI checks `result.ok` before accessing data fields.
 
-Secondary/optional data (roles, auto-prov rules) uses a nested try/catch so failures surface as error strings rather than crashing the whole lookup.
+Secondary/optional data (roles) uses a nested try/catch so failures surface as error strings rather than crashing the whole lookup. Auto-provisioning rules are fetched on demand via a separate `hcm:autoProvRules` IPC channel.
 
 ---
 
@@ -346,3 +346,13 @@ SmartScreen shows an "unknown publisher" warning on install; users click More in
 - Removed `BUILD_WINDOWS.txt` (superseded by README + GitHub Actions).
 - Removed `lookup-position.js` (original CLI prototype; logic fully ported into `main.js`).
 - Untracked `.claude/settings.local.json`; added `.claude/` and `*.zip` to `.gitignore`.
+
+### Commit 1e8dd3d — All active assignments, managers, on-demand auto-prov, Reconnect button
+- **Person lookup now returns all active assignments** (not just primary), deduplicated by `PositionCode`. A person may have many assignment records for the same position (e.g. hourly workers with one record per contract period) — dedup by position code keeps the UI clean.
+- **Manager per assignment:** Oracle's assignments expand includes a `managers` child array with `ManagerAssignmentNumber` (e.g. `E800753987-2` or `E900004088`) but no display name. The person number is extracted by stripping the leading letter prefix and optional trailing `-N` suffix, then looked up via `/workers` (falling back to `/publicWorkers`). All unique manager lookups run in parallel alongside position name fetches.
+- **Assignments table** in the result UI: columns are Position Code, Position Name, Manager. Primary assignment is highlighted with a green "Primary" badge. Primary assignment's position code drives the Assigned Roles and auto-prov lookups.
+- **Role code link click handler** now targets `#rolesTable tbody` explicitly — was previously `el.querySelector('tbody')` which matched the assignments table instead after it was added above the roles table.
+- **Auto-provisioning rules are now loaded on demand** via a "Load Auto-Provisioning Rules" button, rather than being fetched automatically on every lookup. This removes the slowest SOAP call from the critical path. IPC channel: `hcm:autoProvRules`.
+- **Person ID** (`PersonId`) is now returned from `hcm:lookup` and displayed in the results.
+- **Reconnect button** in the card header calls `app.relaunch()` + `app.quit()` via `app:relaunch` IPC. Useful after a VPN reconnect if the app's network state needs resetting. Normal VPN reconnect (without clicking Reconnect) also works because `Connection: close` prevents stale socket reuse.
+- **403 on `/userAccounts`** now shows a clear message ("Connect to the Davidson network") instead of the raw API error.

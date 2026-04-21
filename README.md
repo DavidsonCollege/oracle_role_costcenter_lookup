@@ -1,6 +1,6 @@
 # Oracle Access Request Lookup
 
-Electron desktop app for looking up Oracle HCM worker positions, assigned security roles, auto-provisioning rules, and cost center manager information.
+Electron desktop app for looking up Oracle HCM worker assignments, assigned security roles, auto-provisioning rules, and cost center manager information.
 
 ---
 
@@ -12,7 +12,8 @@ Electron desktop app for looking up Oracle HCM worker positions, assigned securi
 4. Follow the installer prompts; choose an install directory if prompted
 5. Launch **Oracle Access Request Lookup** from the Start menu
 6. Enter your HCM Base URL, username, and password — the URL and username will be remembered next time; the password must be re-entered each session
-7. When a new version is available, the app will prompt you to install it automatically
+7. The app requires a connection to the Davidson network (VPN or on-campus) to retrieve security roles. If you reconnect to VPN mid-session and lookups still fail, click the **Reconnect** button in the top-right corner to restart the app
+8. When a new version is available, the app will prompt you to install it automatically
 
 ---
 
@@ -23,7 +24,8 @@ Electron desktop app for looking up Oracle HCM worker positions, assigned securi
 3. Open the `.dmg` file and drag **Oracle Access Request Lookup** into your Applications folder
 4. Launch **Oracle Access Request Lookup** from your Applications folder
 5. Enter your HCM Base URL, username, and password — the URL and username will be remembered next time; the password must be re-entered each session
-6. When a new version is available, the app will download it automatically and show a dialog at startup — click **Restart Now** to apply the update
+6. The app requires a connection to the Davidson network (VPN or on-campus) to retrieve security roles. If you reconnect to VPN mid-session and lookups still fail, click the **Reconnect** button in the top-right corner to restart the app
+7. When a new version is available, the app will download it automatically and show a dialog at startup — click **Restart Now** to apply the update
 
 ---
 
@@ -71,9 +73,9 @@ Open `main.js` and update the three report paths to match where you imported the
 
 | Line | Report |
 |------|--------|
-| 116 | Cost Center Hierarchy |
-| 352 | Cost Center Manager |
-| 420 | Auto-Provisioning Rules |
+| 118 | Cost Center Hierarchy |
+| 348 | Cost Center Manager |
+| 430 | Auto-Provisioning Rules |
 
 Replace the paths with your own, keeping the `.xdo` extension:
 ```js
