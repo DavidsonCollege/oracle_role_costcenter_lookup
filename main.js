@@ -197,10 +197,11 @@ ipcMain.handle('hcm:lookup', async (_event, { baseUrl, username, password, searc
       getAssignedRoles(baseUrl, username, password, personId),
     ]);
 
-    const provisioningRules = rolesResult[0].status === 'fulfilled' ? rolesResult[0].value : [];
+    const provisioningRules = rolesResult[0].status === 'fulfilled' ? rolesResult[0].value.roles   : [];
     const rulesError        = rolesResult[0].status === 'rejected'  ? rolesResult[0].reason.message : null;
+    const userGuid          = rolesResult[0].status === 'fulfilled' ? rolesResult[0].value.userGuid  : null;
 
-    return { ok: true, assignments, positionCode, provisioningRules, rulesError, personNumber, personId, displayName, legalName, preferredName };
+    return { ok: true, assignments, positionCode, provisioningRules, rulesError, userGuid, personNumber, personId, displayName, legalName, preferredName };
   } catch (err) {
     return { ok: false, error: `Worker lookup failed: ${err.message}` };
   }
@@ -768,6 +769,7 @@ async function getAssignedRoles(baseUrl, username, password, personId) {
   }
 
   const account = accountData.items[0];
+  const userGuid = account.GUID ?? null;
 
   // Step 2 — follow the self link to build the child resource URL.
   // This avoids guessing the internal account ID field name.
@@ -788,7 +790,8 @@ async function getAssignedRoles(baseUrl, username, password, personId) {
   // Filter to roles relevant to access request reviews: DAV_SEC_* codes are the
   // security roles used by this org; REPORTS roles control BI report access.
   // All other roles (HR, payroll, etc.) are excluded to keep the UI focused.
-  return items.filter(role =>
+  const roles = items.filter(role =>
     role.RoleCode?.startsWith('DAV_SEC') || role.RoleCode?.includes('REPORTS')
   );
+  return { roles, userGuid };
 }

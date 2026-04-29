@@ -88,6 +88,7 @@ async function doLookup(baseUrl, username, password, searchTerm) {
     positionCode     : result.positionCode,
     provisioningRules: result.provisioningRules,
     rulesError       : result.rulesError,
+    userGuid         : result.userGuid,
     personNumber     : result.personNumber,
     personId         : result.personId,
     displayName      : result.displayName,
@@ -122,7 +123,7 @@ function selectCandidate(personNumber) {
   lookup();
 }
 
-function showSuccess({ personNumber, personId, displayName, legalName, preferredName, positionCode, assignments, provisioningRules, rulesError }) {
+function showSuccess({ personNumber, personId, userGuid, displayName, legalName, preferredName, positionCode, assignments, provisioningRules, rulesError }) {
   const el = document.getElementById('result');
   el.className = 'result success';
 
@@ -180,6 +181,7 @@ function showSuccess({ personNumber, personId, displayName, legalName, preferred
   </div>`;
 
   el.innerHTML = `
+    ${nameRow}
     <div class="result-row">
       <span class="result-key">Person Number</span>
       <span class="result-val">${esc(personNumber)}</span>
@@ -188,7 +190,11 @@ function showSuccess({ personNumber, personId, displayName, legalName, preferred
       <span class="result-key">Person ID</span>
       <span class="result-val">${esc(personId ?? '—')}</span>
     </div>
-    ${nameRow}
+    ${userGuid ? `
+    <div class="result-row">
+      <span class="result-key">User GUID</span>
+      <span class="result-val">${esc(userGuid)}</span>
+    </div>` : ''}
     <div class="result-row assignments-row">
       <span class="result-key">Assignment${assignments.length !== 1 ? 's' : ''}</span>
       <span class="result-val">
