@@ -1,19 +1,23 @@
 // ── Wire up buttons and key listeners ─────────────────────────────────────
 document.getElementById('lookupBtn').addEventListener('click', lookup);
 document.getElementById('ccBtn').addEventListener('click', runCCReport);
+document.getElementById('manageCCRoleBtn').addEventListener('click', runManageCCRole);
 document.getElementById('reconnectBtn').addEventListener('click', () => window.hcmAPI.appRelaunch());
 
 // ── Button enable/disable based on required fields ──────────────────────────
 function updateButtonStates() {
-  const username   = document.getElementById('username').value.trim();
-  const password   = document.getElementById('password').value;
-  const personNum  = document.getElementById('personNumber').value.trim();
-  const costCenter = document.getElementById('costCenter').value.trim();
-  document.getElementById('lookupBtn').disabled = !username || !password || !personNum;
-  document.getElementById('ccBtn').disabled     = !username || !password || !costCenter;
+  const username        = document.getElementById('username').value.trim();
+  const password        = document.getElementById('password').value;
+  const personNum       = document.getElementById('personNumber').value.trim();
+  const costCenter      = document.getElementById('costCenter').value.trim();
+  const accessCC        = document.getElementById('accessCostCenter').value.trim();
+  const accessPersonNum = document.getElementById('accessPersonNumber').value.trim();
+  document.getElementById('lookupBtn').disabled      = !username || !password || !personNum;
+  document.getElementById('ccBtn').disabled          = !username || !password || !costCenter;
+  document.getElementById('manageCCRoleBtn').disabled = !accessCC || !accessPersonNum;
 }
 
-['username', 'password', 'personNumber', 'costCenter'].forEach(id => {
+['username', 'password', 'personNumber', 'costCenter', 'accessCostCenter', 'accessPersonNumber'].forEach(id => {
   document.getElementById(id).addEventListener('input', updateButtonStates);
 });
 
@@ -33,6 +37,12 @@ Promise.all([window.hcmAPI.appVersion(), window.hcmAPI.buildDate()]).then(([v, d
 
 document.getElementById('costCenter').addEventListener('keydown', e => {
   if (e.key === 'Enter') runCCReport();
+});
+
+['accessCostCenter', 'accessPersonNumber'].forEach(id => {
+  document.getElementById(id).addEventListener('keydown', e => {
+    if (e.key === 'Enter') runManageCCRole();
+  });
 });
 
 ['username', 'password', 'personNumber'].forEach(id => {
@@ -374,6 +384,46 @@ function showCCError(msg) {
   const el = document.getElementById('ccResult');
   el.className = 'result error';
   el.innerHTML = `<span class="error-icon">&#9888;</span><span class="error-msg">${esc(msg)}</span>`;
+}
+
+// ── Cost Center Access (add / remove DAV_SEC_<number> role) ───────────────
+
+async function runManageCCRole() {
+  const costCenter  = document.getElementById('accessCostCenter').value.trim();
+  const personNum   = document.getElementById('accessPersonNumber').value.trim();
+  const action      = document.querySelector('input[name="accessAction"]:checked')?.value ?? 'add';
+  const btn         = document.getElementById('manageCCRoleBtn');
+  const resultEl    = document.getElementById('accessResult');
+
+  if (!costCenter || !personNum) return;
+
+  btn.disabled = true;
+  btn.classList.add('loading');
+  resultEl.className = 'result';
+  resultEl.innerHTML = '';
+
+  try {
+    const baseUrl  = document.getElementById('baseUrl').value.trim().replace(/\/$/, '');
+    const username = document.getElementById('username').value.trim();
+    const password = document.getElementById('password').value;
+
+    const result = await window.hcmAPI.manageCCRole({ baseUrl, username, password, personNumber: personNum, costCenter, action });
+
+    if (!result.ok) {
+      resultEl.className = 'result error';
+      resultEl.innerHTML = `<span class="error-icon">&#9888;</span><span class="error-msg">${esc(result.error)}</span>`;
+    } else {
+      resultEl.className = 'result success';
+      resultEl.innerHTML = `<span style="font-size:0.9rem">${esc(result.message)}</span>`;
+    }
+  } catch (err) {
+    resultEl.className = 'result error';
+    resultEl.innerHTML = `<span class="error-icon">&#9888;</span><span class="error-msg">${esc(err.message)}</span>`;
+  } finally {
+    btn.disabled = false;
+    btn.classList.remove('loading');
+    updateButtonStates();
+  }
 }
 
 // ── Add single cost center to the CC Report field ─────────────────────────

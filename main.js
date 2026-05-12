@@ -9,7 +9,7 @@ const XLSX = require('xlsx');
 function createWindow() {
   const win = new BrowserWindow({
     width: 1100,
-    height: 820,
+    height: 964,
     resizable: true,
     title: 'Oracle Access Request Lookup',
     webPreferences: {
@@ -729,6 +729,157 @@ async function findWorkersByName(baseUrl, token, name) {
 
   return [...seen.values()];
 }
+
+// ── Role catalog lookup ───────────────────────────────────────────────────────
+//
+// Queries the Oracle roles catalog to resolve a cost center number to its full
+// role code (e.g. "2880" → "DAV_SEC_2880_DEPT_MANAGER").
+// The number must be followed by a non-digit to avoid prefix collisions.
+
+async function lookupRoleCodeByNumber(baseUrl, username, password, number) {
+  // Matches DAV_SEC_<number>_... or DAV-SEC-<number>-... (underscore or dash separators, case-insensitive).
+  const re = new RegExp(`DAV[_-]SEC[_-]${number}([^\\d]|$)`, 'i');
+  const token = Buffer.from(`${username}:${password}`).toString('base64');
+  const scimHeaders = {
+    Authorization: `Basic ${token}`,
+    'Content-Type': 'application/scim+json',
+    Accept: 'application/scim+json',
+  };
+  const scimBase = `${baseUrl}/hcmRestApi/scim`;
+
+  // Scan all string fields in a SCIM resource for a matching role code/name.
+  // Returns the resource `id` (used in the PATCH URL) when any field matches.
+  const findMatch = resources => {
+    for (const r of resources) {
+      for (const val of Object.values(r)) {
+        if (typeof val === 'string' && re.test(val)) return { scimId: r.id ?? val, displayCode: val };
+      }
+    }
+    return null;
+  };
+
+  const getResources = data =>
+    data.Resources ?? data.resources ?? data.items ?? [];
+
+  // Try progressively broader filters. Stop as soon as one returns a match.
+  const filters = [
+    `id sw "DAV_SEC_${number}"`,
+    `displayName sw "DAV-SEC-${number}"`,
+    `name sw "DAV_SEC_${number}"`,
+    `name sw "DAV-SEC-${number}"`,
+    `id co "_${number}_"`,
+    `displayName co "-${number}-"`,
+  ];
+
+  for (const filter of filters) {
+    try {
+      const params = new URLSearchParams({ filter, count: '20' });
+      const res = await fetchWithTimeout(`${scimBase}/Roles?${params}`, { headers: scimHeaders }, 15000);
+      if (!res.ok) continue;
+      const found = findMatch(getResources(await res.json()));
+      if (found) return found;
+    } catch { /* try next filter */ }
+  }
+
+  // Last resort: fetch all roles without a filter and scan client-side.
+  try {
+    const params = new URLSearchParams({ count: '500', startIndex: '1' });
+    const res = await fetchWithTimeout(`${scimBase}/Roles?${params}`, { headers: scimHeaders }, 20000);
+    if (res.ok) {
+      const found = findMatch(getResources(await res.json()));
+      if (found) return found;
+    }
+  } catch { /* fall through */ }
+
+  throw new Error(`No role found matching DAV_SEC_${number}. Verify the cost center number.`);
+}
+
+// ── IPC: hcm:manageCCRole ────────────────────────────────────────────────────
+//
+// Adds or removes a DAV_SEC_<costCenter> role from a user account.
+// Receives { baseUrl, username, password, personNumber, costCenter, action }
+// action: 'add' | 'remove'
+// Returns { ok: true, message: '...' } | { ok: false, error: '...' }
+
+ipcMain.handle('hcm:manageCCRole', async (_event, { baseUrl, username, password, personNumber, costCenter, action }) => {
+  try {
+    const token = Buffer.from(`${username}:${password}`).toString('base64');
+    const restHeaders = { Authorization: `Basic ${token}`, 'Content-Type': 'application/json' };
+    const scimHeaders = {
+      Authorization: `Basic ${token}`,
+      'Content-Type': 'application/scim+json',
+      Accept: 'application/scim+json',
+    };
+    const scimBase = `${baseUrl}/hcmRestApi/scim`;
+
+    // Step 1 — resolve person number to PersonId.
+    const workerParams = new URLSearchParams({ q: `PersonNumber=${personNumber}`, limit: '1' });
+    const workerRes = await fetchWithTimeout(
+      `${baseUrl}/hcmRestApi/resources/latest/workers?${workerParams}`,
+      { headers: restHeaders }
+    );
+    if (!workerRes.ok) {
+      const body = await workerRes.text().catch(() => '');
+      throw new Error(`Worker lookup failed ${workerRes.status}${body ? ': ' + body.slice(0, 200) : ''}`);
+    }
+    const personId = (await workerRes.json()).items?.[0]?.PersonId;
+    if (!personId) throw new Error(`No worker found with person number ${personNumber}`);
+
+    // Step 2 — get the User GUID from the userAccounts resource (needed for SCIM member ops).
+    const accountParams = new URLSearchParams({ q: `PersonId=${personId}`, limit: '1' });
+    const accountRes = await fetchWithTimeout(
+      `${baseUrl}/hcmRestApi/resources/latest/userAccounts?${accountParams}`,
+      { headers: restHeaders }
+    );
+    if (!accountRes.ok) {
+      if (accountRes.status === 403) throw new Error('Could not access user account — check VPN connection.');
+      const body = await accountRes.text().catch(() => '');
+      throw new Error(`User account lookup failed ${accountRes.status}${body ? ': ' + body.slice(0, 200) : ''}`);
+    }
+    const account = (await accountRes.json()).items?.[0];
+    if (!account) throw new Error(`No user account found for person number ${personNumber}`);
+    const userGuid = account.GUID;
+    if (!userGuid) throw new Error('User GUID not found on account — cannot perform SCIM operation');
+
+    // Step 3 — find the full role code via the SCIM Roles API.
+    const { scimId, displayCode } = await lookupRoleCodeByNumber(baseUrl, username, password, costCenter);
+
+    // Step 4 — add or remove membership via SCIM.
+    // Oracle's SCIM Roles API uses a simple PATCH body (no PatchOp wrapper).
+    const roleUrl = `${scimBase}/Roles/${encodeURIComponent(scimId)}`;
+
+    if (action === 'add') {
+      const res = await fetchWithTimeout(roleUrl, {
+        method: 'PATCH',
+        headers: scimHeaders,
+        body: JSON.stringify({ members: [{ value: userGuid }] }),
+      }, 20000);
+      if (res.ok) return { ok: true, message: `Role ${displayCode} successfully added.` };
+      const b = await res.text().catch(() => '');
+      throw new Error(`Failed to add role — ${res.status}: ${b.slice(0, 200)}`);
+
+    } else {
+      // GET current members, filter out the user, PATCH with the updated list.
+      const getRes = await fetchWithTimeout(roleUrl, { method: 'GET', headers: scimHeaders }, 15000);
+      if (!getRes.ok) {
+        const b = await getRes.text().catch(() => '');
+        throw new Error(`Failed to retrieve role members — ${getRes.status}: ${b.slice(0, 200)}`);
+      }
+      const role = await getRes.json();
+      const updatedMembers = (role.members ?? role.Members ?? []).filter(m => m.value !== userGuid);
+      const patchRes = await fetchWithTimeout(roleUrl, {
+        method: 'PATCH',
+        headers: scimHeaders,
+        body: JSON.stringify({ members: updatedMembers }),
+      }, 20000);
+      if (patchRes.ok) return { ok: true, message: `Role ${displayCode} successfully removed.` };
+      const b = await patchRes.text().catch(() => '');
+      throw new Error(`Failed to remove role — ${patchRes.status}: ${b.slice(0, 200)}`);
+    }
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
 
 // ── Assigned roles ────────────────────────────────────────────────────────────
 //

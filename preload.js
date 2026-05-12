@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('hcmAPI', {
   appVersion  : ()       => ipcRenderer.invoke('app:version'),
   appRelaunch : ()       => ipcRenderer.invoke('app:relaunch'),
   buildDate   : ()       => ipcRenderer.invoke('app:buildDate'),
-  getSettings : ()       => ipcRenderer.invoke('hcm:getSettings'),
-  saveSettings: (params) => ipcRenderer.invoke('hcm:saveSettings', params),
+  getSettings  : ()       => ipcRenderer.invoke('hcm:getSettings'),
+  saveSettings : (params) => ipcRenderer.invoke('hcm:saveSettings', params),
+  manageCCRole : (params) => ipcRenderer.invoke('hcm:manageCCRole', params),
 });

@@ -55,6 +55,49 @@ Authorization: `Basic ${Buffer.from(`${username}:${password}`).toString('base64'
 
 ---
 
+## Oracle HCM SCIM API
+
+**Base path:** `{baseUrl}/hcmRestApi/scim`  
+**Content-Type / Accept:** `application/scim+json`
+
+Used for adding and removing security role membership directly, bypassing Oracle's role-request workflow (which requires roles to be flagged as "requestable").
+
+### `/Roles` endpoint
+
+**Role code formats:**
+- Role code (underscore): `DAV_SEC_<number>_<SUFFIX>` — e.g. `DAV_SEC_1000_GENERAL_LEDGER`
+- Display name (dash): `DAV-SEC-<number>-<Suffix>` — e.g. `DAV-SEC-1000-General-Ledger`
+- SCIM `id`: internal Oracle UUID — e.g. `15A6033341D54DA4B72C9E71D14A2BC8` — used in PATCH/GET URLs, not human-readable
+
+**Role lookup (`lookupRoleCodeByNumber` in `main.js`):**
+- Tries progressively broader SCIM filters: `id sw "DAV_SEC_<n>"`, `displayName sw "DAV-SEC-<n>"`, `name sw "DAV_SEC_<n>"`, `id co "_<n>_"`, `displayName co "-<n>-"`
+- Last resort: fetch up to 500 roles without a filter and scan client-side via regex `DAV[_-]SEC[_-]<number>([^\d]|$)`
+- Returns `{ scimId, displayCode }` — `scimId` goes in the PATCH URL; `displayCode` is the human-readable matched field shown in UI messages
+
+**`userGuid`:** obtained from `/hcmRestApi/resources/latest/userAccounts?q=PersonId=...` as `account.GUID` (e.g. `09EFADDC5DC273C2E0634C96590AF568`)
+
+**Add role membership:**
+```js
+PATCH {baseUrl}/hcmRestApi/scim/Roles/{scimId}
+Content-Type: application/scim+json
+Body: { "members": [{ "value": userGuid }] }
+```
+
+**Remove role membership** — GET current members, filter out the user, PATCH with the updated list:
+```js
+GET  {baseUrl}/hcmRestApi/scim/Roles/{scimId}    // → role.members array
+PATCH {baseUrl}/hcmRestApi/scim/Roles/{scimId}
+Body: { "members": updatedMembers }              // members array minus the target user
+```
+
+### SCIM Gotchas
+- **Standard PatchOp does not work** — Oracle returns 400 "Unrecognized field: Operations" for both `Operations` and `operations`. Use a bare `{ "members": [...] }` body instead.
+- **DELETE on Members sub-resource returns 403** — do not attempt `DELETE .../Members/{userGuid}`.
+- **PUT returns 405** — Oracle's SCIM does not support PUT on Roles.
+- **IPC channel:** `hcm:manageCCRole` — receives `{ baseUrl, username, password, personNumber, costCenter, action }` where `action` is `'add'` or `'remove'`; exposed as `window.hcmAPI.manageCCRole(params)`.
+
+---
+
 ## Oracle HCM SOAP API (PublicReportService)
 
 **Endpoint:** `{baseUrl}/xmlpserver/services/PublicReportService`
@@ -346,6 +389,14 @@ SmartScreen shows an "unknown publisher" warning on install; users click More in
 - Removed `BUILD_WINDOWS.txt` (superseded by README + GitHub Actions).
 - Removed `lookup-position.js` (original CLI prototype; logic fully ported into `main.js`).
 - Untracked `.claude/settings.local.json`; added `.claude/` and `*.zip` to `.gitignore`.
+
+### v1.3.9 — Cost Center Access: add/remove Oracle role via SCIM
+- **New "Cost Center Access" section** in the UI: user enters a cost center number and person number, selects Add or Remove, and the app adds or removes the corresponding `DAV_SEC_<number>_<SUFFIX>` role from the user's Oracle account.
+- **Role lookup** via `/hcmRestApi/scim/Roles` with multiple filter fallbacks; returns `{ scimId, displayCode }`.
+- **Add:** `PATCH /hcmRestApi/scim/Roles/{scimId}` with `{"members": [{"value": userGuid}]}`.
+- **Remove:** `GET` the role to retrieve current members → filter out the user → `PATCH` with the updated members array.
+- Standard SCIM PatchOp (`Operations` field) is not supported by Oracle — bare PATCH body works instead.
+- IPC channel: `hcm:manageCCRole`.
 
 ### Commit 1e8dd3d — All active assignments, managers, on-demand auto-prov, Reconnect button
 - **Person lookup now returns all active assignments** (not just primary), deduplicated by `PositionCode`. A person may have many assignment records for the same position (e.g. hourly workers with one record per contract period) — dedup by position code keeps the UI clean.

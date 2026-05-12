@@ -143,7 +143,8 @@
       margin-bottom: 1.5rem;
     }
 
-    .lookup-row input { flex: 1; }
+    .lookup-row input[type="text"],
+    .lookup-row input[type="password"] { flex: 1; }
 
     button {
       padding: 0.55rem 1.2rem;
@@ -471,6 +472,21 @@
       white-space: nowrap;
     }
 
+    /* ── Cost Center Access section ──────────────────────────────────────── */
+    .access-row { gap: 0.5rem; flex-wrap: wrap; align-items: center; }
+
+    .radio-label {
+      display: flex;
+      align-items: center;
+      gap: 0.3rem;
+      font-size: 0.85rem;
+      cursor: pointer;
+      white-space: nowrap;
+      user-select: none;
+    }
+
+    .radio-label input[type="radio"] { cursor: pointer; }
+
 </style>
 </head>
 <body>
@@ -486,7 +502,7 @@
         <h1>Oracle Access Request Lookup</h1>
         <p>Look up worker positions, assigned security roles, auto-provisioning rules, and cost center managers</p>
       </div>
-      <button id="reconnectBtn" title="Restart the app to reset network connections">Reconnect</button>
+      <button id="reconnectBtn" title="If you connected to VPN after opening this app, click here to restart it and reset the network connection.">Reconnect</button>
     </div>
 
     <p class="section-label">Connection &amp; Credentials</p>
@@ -533,6 +549,22 @@
     </div>
 
     <div class="result" id="ccResult"></div>
+
+    <hr class="section-divider" />
+
+    <p class="section-label">Cost Center Access</p>
+    <div class="lookup-row access-row">
+      <input type="text" id="accessCostCenter" placeholder="Cost Center, e.g. 2880" />
+      <input type="text" id="accessPersonNumber" placeholder="Person Number" />
+      <label class="radio-label"><input type="radio" name="accessAction" value="add" checked /> Add</label>
+      <label class="radio-label"><input type="radio" name="accessAction" value="remove" /> Remove</label>
+      <button id="manageCCRoleBtn">
+        <span class="spinner"></span>
+        <span class="btn-label">Submit</span>
+      </button>
+    </div>
+
+    <div class="result" id="accessResult"></div>
 
     <p class="note">Credentials are never stored. All requests are made securely via the desktop app — no browser CORS restrictions.<br><span id="appVersion" style="opacity:0.6"></span></p>
   </div>

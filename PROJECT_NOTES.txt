@@ -60,6 +60,56 @@ Key endpoints used:
       (HR, payroll, etc.) are filtered out as irrelevant to access reviews.
 
 
+ORACLE HCM SCIM API
+-------------------
+Base path: {baseUrl}/hcmRestApi/scim
+Content-Type / Accept: application/scim+json
+
+Used for adding and removing security role membership directly, bypassing
+Oracle's role-request workflow (which requires roles to be flagged as requestable).
+
+Role code formats:
+  DAV_SEC_<number>_<SUFFIX>   — role code (underscores), e.g. DAV_SEC_1000_GENERAL_LEDGER
+  DAV-SEC-<number>-<Suffix>   — display name (dashes),   e.g. DAV-SEC-1000-General-Ledger
+  SCIM id                     — internal Oracle UUID (e.g. 15A6033341D54DA4B72C9E71D14A2BC8)
+                                used in PATCH/GET URLs, not human-readable
+
+Role lookup (lookupRoleCodeByNumber in main.js):
+  Tries progressively broader SCIM filters:
+    id sw "DAV_SEC_<n>", displayName sw "DAV-SEC-<n>", name sw "DAV_SEC_<n>",
+    id co "_<n>_", displayName co "-<n>-"
+  Last resort: fetch 500 roles without filter, scan client-side with regex
+    /DAV[_-]SEC[_-]<n>([^\d]|$)/i
+  Returns { scimId, displayCode }:
+    scimId      — UUID for the PATCH/GET URL
+    displayCode — human-readable matched field shown in UI success messages
+
+userGuid: obtained from /userAccounts?q=PersonId=... as account.GUID
+  e.g. 09EFADDC5DC273C2E0634C96590AF568
+
+Add role membership:
+  PATCH {baseUrl}/hcmRestApi/scim/Roles/{scimId}
+  Content-Type: application/scim+json
+  Body: { "members": [{ "value": userGuid }] }
+
+Remove role membership (GET → filter → PATCH):
+  GET  {baseUrl}/hcmRestApi/scim/Roles/{scimId}   → role.members array
+  PATCH {baseUrl}/hcmRestApi/scim/Roles/{scimId}
+  Body: { "members": <members array minus the target user> }
+
+SCIM gotchas:
+  - Standard PatchOp DOES NOT WORK. Oracle returns 400 "Unrecognized field:
+    Operations" for both 'Operations' and 'operations'. Use a bare
+    { "members": [...] } body instead.
+  - DELETE on Members sub-resource returns 403. Do not use.
+  - PUT returns 405. Oracle's SCIM does not support PUT on Roles.
+
+IPC channel: hcm:manageCCRole
+  Receives: { baseUrl, username, password, personNumber, costCenter, action }
+  action: 'add' | 'remove'
+  Exposed as: window.hcmAPI.manageCCRole(params)
+
+
 ORACLE HCM SOAP API (PublicReportService)
 -----------------------------------------
 Endpoint: {baseUrl}/xmlpserver/services/PublicReportService
