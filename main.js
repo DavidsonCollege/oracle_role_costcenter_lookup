@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const fs   = require('fs');
@@ -73,6 +73,8 @@ function settingsPath() {
 ipcMain.handle('app:version', () => app.getVersion());
 
 ipcMain.handle('app:relaunch', () => { app.relaunch(); app.quit(); });
+
+ipcMain.handle('shell:openExternal', (_event, url) => shell.openExternal(url));
 
 ipcMain.handle('app:buildDate', () => {
   try {

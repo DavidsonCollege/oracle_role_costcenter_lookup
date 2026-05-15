@@ -302,6 +302,33 @@ git push origin v1.x.x               # push new tag
 
 First-time setup: repo → Settings → Actions → General → set Workflow permissions to **Read and write**.
 
+### Release notes / install instructions
+
+The `create-release` step passes install instructions as the release body via `--notes`. GitHub renders this as formatted text at the top of the release page, above the asset list — more visible than a separate file users would have to download.
+
+```yaml
+- name: Create GitHub release
+  env:
+    GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  run: |
+    gh release create "${{ github.ref_name }}" --title "${{ github.ref_name }}" --draft=false --notes "## Installation
+
+    **Mac**
+    1. Download \`AppName-...-universal.dmg\`
+    2. Open the DMG and drag the app to your Applications folder
+    3. On first launch, right-click the app and choose **Open** (required once to allow a non-App-Store app)
+
+    **Windows**
+    1. Download \`AppName-Setup-....exe\`
+    2. Run the installer — if Windows SmartScreen appears, click **More info → Run anyway**
+    3. The app installs to Program Files by default; you can choose a different location
+
+    ---
+    Any prerequisites or access requirements go here."
+```
+
+To update the body of an already-published release without rebuilding: `gh release edit v1.x.x --notes "..."`
+
 ### Auto-update behaviour
 
 `electron-updater` is initialised in `main.js` inside an `if (app.isPackaged)` guard so it never runs during `npm start`.

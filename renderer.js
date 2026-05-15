@@ -35,6 +35,10 @@ Promise.all([window.hcmAPI.appVersion(), window.hcmAPI.buildDate()]).then(([v, d
   document.getElementById('appVersion').textContent = `v${v}${date}`;
 });
 
+document.getElementById('feedbackLink').addEventListener('click', () => {
+  window.hcmAPI.openExternal('mailto:jedonovan@davidson.edu?subject=Oracle%20Access%20Request%20Lookup%20feedback');
+});
+
 document.getElementById('costCenter').addEventListener('keydown', e => {
   if (e.key === 'Enter') runCCReport();
 });
