@@ -42,6 +42,7 @@ jobs:
             build_cmd: npm run build:win -- --publish always
 
     runs-on: ${{ matrix.os }}
+    environment: release
 
     steps:
       - uses: actions/checkout@v6
