@@ -260,7 +260,7 @@ Every app file the app loads at runtime must be listed — forgetting `renderer.
 | Package | Version | Purpose |
 |---------|---------|---------|
 | `read-excel-file` | `^9.3.12` | In-memory Excel parsing of SOAP report output, no temp files needed |
-| `electron` | `^42.11.16` | Desktop app framework (devDependency) |
+| `electron` | `^45.0.0` | Desktop app framework (devDependency) |
 | `electron-builder` | `^26.18.0` | Packaging (devDependency) |
 | `electron-updater` | `^6.8.11` | Auto-update support (runtime dependency) |
 
@@ -275,7 +275,7 @@ Every app file the app loads at runtime must be listed — forgetting `renderer.
 Releases are built by **GitHub Actions** (`.github/workflows/build.yml`). The workflow triggers on any `v*` tag push and runs two parallel jobs — one on `macos-latest` producing a universal DMG, one on `windows-latest` producing an NSIS `.exe` — then publishes both as assets on a GitHub Release via `GH_TOKEN`.
 
 **Workflow key points:**
-- Uses `actions/checkout@v6` and `actions/setup-node@v6` — these run on Node.js 24. Do not downgrade to v4 (Node.js 20, deprecated).
+- Uses `actions/checkout@v7` and `actions/setup-node@v7` (kept current by Dependabot's grouped `github-actions` PRs). Do not downgrade to v4 (Node.js 20, deprecated).
 - `fail-fast: false` on the matrix — both platform jobs run independently; one failure does not cancel the other.
 - Each runner uses its own platform-specific script (`build:mac` / `build:win`). Never use `npm run build` (which targets both platforms) in CI — the Mac runner cannot build Windows targets and vice versa.
 - `icon.ico` must be at least 256x256. The current file was regenerated from `assets/My Oracle App image.png` (1024x1024 source).
