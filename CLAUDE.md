@@ -359,7 +359,7 @@ To update the body of an already-published release without rebuilding: `gh relea
 
 Mac builds are signed and notarized via GitHub Actions using a Developer ID Application certificate. The workflow imports the certificate from GitHub Secrets, signs the app, and notarizes with Apple before publishing.
 
-**Required GitHub Secrets:**
+**Required GitHub Secrets** (environment secrets on the `release` environment, which only `v*` tags can use, so a workflow pushed to some other branch can't read them; set with `gh secret set NAME --env release`):
 | Secret | Value |
 |--------|-------|
 | `APPLE_CERT` | Base64-encoded `.p12` certificate — run `base64 -i your-cert.p12 \| pbcopy` in Terminal. Must have no trailing carriage return or newline — delete and recreate the secret if any appear when pasting. |
