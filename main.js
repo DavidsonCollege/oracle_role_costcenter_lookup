@@ -710,14 +710,23 @@ async function findWorkersByName(baseUrl, token, name) {
       const params = new URLSearchParams({ q, limit: '25' });
       const url = `${baseUrl}/hcmRestApi/resources/latest/${endpoint}?${params}`;
       return fetchWithTimeout(url, { headers }, 10000)
-        .then(res => res.ok ? res.json() : null)
-        .catch(() => null);
+        .then(async res => ({ status: res.status, data: res.ok ? await res.json() : null }))
+        .catch(() => ({ status: null, data: null }));
     })
   );
+  const responses = settled.map(r => r.status === 'fulfilled' ? r.value : { status: null, data: null });
+
+  // If no query succeeded, report why instead of letting it look like "no match".
+  if (!responses.some(r => r.data)) {
+    const statuses = responses.map(r => r.status);
+    if (statuses.includes(401)) throw new Error('API error 401 Unauthorized — check your username and password.');
+    if (statuses.includes(403)) throw new Error('API error 403 Forbidden — your account may not have access to worker records, or you may need to connect to the Davidson network.');
+    if (statuses.every(s => s === null)) throw new Error('Could not reach Oracle — check your network or VPN connection.');
+    throw new Error(`Name search failed (HTTP ${statuses.find(s => s !== null)}).`);
+  }
 
   const seen = new Map();
-  for (const result of settled) {
-    const data = result.status === 'fulfilled' ? result.value : null;
+  for (const { data } of responses) {
     if (!data?.items) continue;
     for (const item of data.items) {
       if (item.PersonNumber && !seen.has(item.PersonNumber)) {

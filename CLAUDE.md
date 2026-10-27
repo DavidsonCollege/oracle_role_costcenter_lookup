@@ -13,6 +13,8 @@ Electron desktop app (Mac + Windows) that queries Oracle HCM Cloud via REST API 
 | `package.json` | Build config for electron-builder |
 | `assets/` | App icons (`icon.icns` for Mac, `icon.ico` for Windows) |
 | `.github/workflows/build.yml` | GitHub Actions release pipeline (builds Mac + Windows in parallel) |
+| `.github/workflows/pr-check.yml` | Runs `npm test` (`test/smoke.js`) on every PR to main — syntax checks, packaged-file check, read-excel-file parse of `test/fixtures/report.xlsx`. Can't launch Electron or reach Oracle, so major updates still need a manual `npm start` test |
+| `.github/dependabot.yml` | Weekly; npm minor/patch updates grouped into one PR (security and routine separately), majors get their own PR; GitHub Actions grouped |
 | `control-budget-app/` | Standalone stripped-down app for the Control Budget report only |
 
 ---

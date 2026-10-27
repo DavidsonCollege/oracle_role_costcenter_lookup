@@ -1,0 +1,24 @@
+version: 2
+updates:
+  # Minor and patch updates are bundled into one weekly PR (one for security fixes,
+  # one for routine updates). Major versions (e.g. a new Electron) still get their
+  # own PR so they can be tested on their own.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      npm-security:
+        applies-to: security-updates
+        update-types: [minor, patch]
+      npm-minor-patch:
+        applies-to: version-updates
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns: ["*"]
