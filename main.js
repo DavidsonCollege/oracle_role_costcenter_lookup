@@ -2,7 +2,7 @@ const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const fs   = require('fs');
-const XLSX = require('xlsx');
+const { readSheet } = require('read-excel-file/node');
 
 // ── Window ────────────────────────────────────────────────────────────────────
 
@@ -255,7 +255,7 @@ function soapFaultMessage(xml) {
 // ── Shared: SOAP report runner ────────────────────────────────────────────────
 //
 // Handles the SOAP envelope, network call, fault detection, and xlsx decoding.
-// Returns the raw SheetJS 2D array for the caller to parse.
+// Returns the first sheet as a 2D array of cell values for the caller to parse.
 //
 // Results are cached in memory for 5 minutes to avoid re-fetching the same
 // report on repeated lookups within a session.
@@ -312,9 +312,9 @@ async function runSoapReport(baseUrl, username, password, reportPath) {
   }
 
   const fileBuffer = Buffer.from(b64, 'base64');
-  const workbook   = XLSX.read(fileBuffer, { type: 'buffer' });
-  const worksheet  = workbook.Sheets[workbook.SheetNames[0]];
-  const data = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' });
+  const rows = await readSheet(fileBuffer);
+  // Empty cells come back as null; callers String() every cell, so normalise to ''.
+  const data = rows.map(row => row.map(cell => cell ?? ''));
   soapCache.set(cacheKey, { data, ts: Date.now() });
   return data;
 }

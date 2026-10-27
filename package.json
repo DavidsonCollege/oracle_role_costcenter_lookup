@@ -1,6 +1,6 @@
 {
   "name": "oracle-access-request-lookup",
-  "version": "1.4.4",
+  "version": "1.4.5",
   "description": "Oracle Access Request Lookup desktop app",
   "main": "main.js",
   "scripts": {
@@ -28,7 +28,7 @@
       "index.html",
       "build-date.json",
       "assets/**",
-      "node_modules/xlsx/**",
+      "node_modules/read-excel-file/**",
       "node_modules/electron-updater/**"
     ],
     "mac": {
@@ -80,6 +80,6 @@
   },
   "dependencies": {
     "electron-updater": "^6.8.11",
-    "xlsx": "^0.18.5"
+    "read-excel-file": "^9.3.12"
   }
 }

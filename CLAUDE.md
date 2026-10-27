@@ -125,8 +125,9 @@ Body: { "members": updatedMembers }              // members array minus the targ
 ### Response Parsing
 - Report data is returned as base64 in the `<reportBytes>` element
 - Decode: `Buffer.from(b64, 'base64')`
-- Parse xlsx in-memory with SheetJS: `XLSX.read(buffer, { type: 'buffer' })`
-- Convert to 2D array: `XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' })`
+- Parse xlsx in-memory with read-excel-file: `const rows = await readSheet(buffer)` (from `require('read-excel-file/node')`; reads the first sheet as a 2D array)
+- Empty cells come back as `null` — normalise with `rows.map(row => row.map(cell => cell ?? ''))`, since callers `String()` every cell
+- Replaced SheetJS (`xlsx`) in v1.4.5: SheetJS stopped publishing to npm after 0.18.5 (which has unpatched advisories), so Dependabot couldn't update it
 
 ### Report Row Structure
 - Some reports: row 0 = title, row 1 = column headers, row 2+ = data
@@ -231,9 +232,9 @@ npm run build       # both
 Must explicitly include all runtime dependencies:
 ```json
 "files": ["main.js", "preload.js", "renderer.js", "index.html", "assets/**",
-          "node_modules/xlsx/**", "node_modules/electron-updater/**"]
+          "node_modules/read-excel-file/**", "node_modules/electron-updater/**"]
 ```
-electron-builder does **not** auto-include `node_modules` unless specified here. Every file the app loads at runtime must be listed — forgetting `renderer.js` breaks the UI in packaged builds.
+Every app file the app loads at runtime must be listed — forgetting `renderer.js` breaks the UI in packaged builds. In practice electron-builder also packages the full `dependencies` tree (including transitive deps such as `electron-updater`'s), confirmed by inspecting `app.asar` from a local `--dir` build; the `node_modules/...` entries are kept for explicitness.
 
 ---
 
@@ -256,10 +257,10 @@ electron-builder does **not** auto-include `node_modules` unless specified here.
 
 | Package | Version | Purpose |
 |---------|---------|---------|
-| `xlsx` (SheetJS) | `^0.18.5` | In-memory Excel parsing, no temp files needed |
-| `electron` | `^40.6.0` | Desktop app framework |
-| `electron-builder` | `^26.8.1` | Packaging (devDependency) |
-| `electron-updater` | `^6.8.3` | Auto-update support (runtime dependency) |
+| `read-excel-file` | `^9.3.12` | In-memory Excel parsing of SOAP report output, no temp files needed |
+| `electron` | `^42.11.16` | Desktop app framework (devDependency) |
+| `electron-builder` | `^26.18.0` | Packaging (devDependency) |
+| `electron-updater` | `^6.8.11` | Auto-update support (runtime dependency) |
 
 `fs` and `path` are Node built-ins.
 
