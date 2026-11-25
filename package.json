@@ -27,6 +27,8 @@
       "preload.js",
       "renderer.js",
       "index.html",
+      "oscs-reindex.js",
+      "oscs-reindex.config.json",
       "build-date.json",
       "assets/**",
       "node_modules/read-excel-file/**",

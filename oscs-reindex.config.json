@@ -1,0 +1,276 @@
+{
+  "_readme": [
+    "Config for the Search Index Rebuild feature (see OSCS_REINDEX_FEATURE.md).",
+    "Edit steps to add, remove or reorder indexes. Never leave an index name blank: a blank name rebuilds every index, and the app refuses to submit it.",
+    "Steps with \"verify\": true warn (and stop) if they ingest 0 rows. If one fails or loads 0 rows during testing, remove it.",
+    "Leave out (Oracle-managed or not used at Davidson): fnd-attachments, fa-crm-productcatalog, fa-scm-rcv-aprcpt, fa-scm-msc-lead-time-orders, fa-scm-msc-lead-time-insights, fa-psc-apo-parcel.",
+    "Each job picks an API: \"erp\" = /fscmRestApi/.../erpintegrations submitESSJobRequest; \"ess\" = /ess/rest/scheduler/v1/requests (needs \"application\").",
+    "args are passed in order (submit.argument1, 2, ...). \"{index}\" is replaced with the step index name. Values marked _verify need confirming in a non-Prod instance; use Inspect request on a past successful request to read its parameters.",
+    "\"extraParameters\" (ess only) adds named request parameters, e.g. {\"name\": \"SYS_effectiveApplication\", \"value\": \"EarHcmEss\"}.",
+    "An argument with \"omit\": true is deliberately not passed (ERP: empty slot; ESS: that submit.argumentN is left out). Not allowed for the ingest job."
+  ],
+  "prodHosts": [
+    "fa-exci-saasfaprod1.fa.ocs.oraclecloud.com"
+  ],
+  "nonProdHostPattern": "^fa-exci-((?:dev|test)\\d*)-saasfaprod1\\.fa\\.ocs\\.oraclecloud\\.com$",
+  "pollSeconds": 30,
+  "maxStatusFailures": 10,
+  "busyRetry": {
+    "waitMinutes": 5,
+    "maxRetries": 3
+  },
+  "jobs": {
+    "ingest": {
+      "label": "ESS job to create index definition and perform initial ingest to OSCS",
+      "api": "erp",
+      "packagePath": "/oracle/apps/ess/fnd/applcore",
+      "jobName": "FndOSCSIndexIngestJob",
+      "application": "FscmEss",
+      "_verify": "If erp submission fails, try api \"ess\" with application FscmEss or EarFscmEss.",
+      "args": [
+        {
+          "value": "{index}",
+          "note": "Index Name to Reingest"
+        },
+        {
+          "value": "false",
+          "note": "Use Existing Index",
+          "_verify": "false or N"
+        }
+      ],
+      "extraParameters": [],
+      "timeoutMinutes": 45,
+      "requireLogCheck": true,
+      "logCheck": {
+        "type": "ingest",
+        "rowsFailedPattern": "Total number of rows failed in the payload\\D{0,20}?(\\d[\\d,]*)",
+        "notIngestedPattern": "number of records not ingested\\D{0,20}?(\\d[\\d,]*)",
+        "rowsPattern": "Total number of rows processed in the current run\\D{0,5}(\\d[\\d,]*)",
+        "_verify": "rowsPattern confirmed against request 10534200 on dev1 (11/25/2026). rowsFailedPattern wording not yet seen in a real log."
+      }
+    },
+    "computeUsersAcl": {
+      "label": "Compute Users ACL",
+      "api": "ess",
+      "packagePath": "/oracle/apps/ess/hcm/users",
+      "jobName": "ComputeUsersACL",
+      "application": "EarHcmEss",
+      "_verify": "Fully confirmed: submitted via ESS on dev1 as request 10534226 (11/25/2026), SUCCEEDED in about 5 min, log check passed (Count- 4388, 'Compute Users ACL... done.').",
+      "args": [
+        {
+          "value": "ALL_USERS",
+          "note": "User Population = All Users (submit.argument1, confirmed)"
+        },
+        {
+          "value": "N",
+          "note": "Simulation = N (submit.argument2, confirmed)"
+        }
+      ],
+      "extraParameters": [],
+      "timeoutMinutes": 60,
+      "requireLogCheck": true,
+      "logCheck": {
+        "type": "count",
+        "requiredPatterns": [
+          "Compute Users ACL.{0,40}done"
+        ],
+        "countPattern": "getAllUsers\\(\\)\\.\\s*Count-\\s*(\\d[\\d,]*)",
+        "minCount": 4000,
+        "expectedCount": 4500,
+        "_verify": "countPattern confirmed against request 11288959 (Count- 4578). The 'done' wording in requiredPatterns comes from the spec and is not yet seen in a fetched log."
+      }
+    },
+    "learningAcl": {
+      "label": "Process Access Control Lists for Learning Items for OSCS",
+      "api": "ess",
+      "packagePath": "/oracle/apps/ess/hcm/engagement/videoshare",
+      "jobName": "ProcessLearningItemsOSCSACLJob",
+      "application": "EarHcmEss",
+      "_verify": "Confirmed on dev1 as request 10534264 (11/25/2026): ESS submission with application EarHcmEss and argument 2 omitted SUCCEEDED in about 30 s. Learner count comes from 'ASE active user Count: 1353'.",
+      "args": [
+        {
+          "value": "ORA_REFRESH_OSCS_LEARN_ACL",
+          "note": "Select Activities = Refresh OSCS Learning Item ACL Index Only (submit.argument1, confirmed)"
+        },
+        {
+          "omit": true,
+          "note": "Person Number: left blank (submit.argument2, confirmed null in Prod)"
+        },
+        {
+          "value": "5",
+          "note": "Concurrent Processes (submit.argument3, confirmed)"
+        },
+        {
+          "value": "1000",
+          "note": "Learners per Batch (submit.argument4, confirmed; anything lower fails)"
+        }
+      ],
+      "extraParameters": [],
+      "timeoutMinutes": 60,
+      "requireLogCheck": true,
+      "logCheck": {
+        "type": "count",
+        "requiredPatterns": [],
+        "errorPattern": "ORA-\\d{5}|Exception|\\bERROR\\b",
+        "countPattern": "ASE active user Count:\\s*(\\d[\\d,]*)",
+        "minCount": 1200,
+        "expectedCount": 1380
+      }
+    }
+  },
+  "steps": [
+    {
+      "index": "fa-hcm-acl",
+      "area": "HCM security",
+      "notes": "ACL index, refilled by Compute Users ACL"
+    },
+    {
+      "index": "fa-hcm-person",
+      "area": "HCM"
+    },
+    {
+      "index": "fa-hcm-person-results",
+      "area": "HCM",
+      "notes": "Longest, about 10 min"
+    },
+    {
+      "index": "fa-hcm-job",
+      "area": "HCM"
+    },
+    {
+      "index": "fa-hcm-position",
+      "area": "HCM"
+    },
+    {
+      "index": "fa-hcm-location",
+      "area": "HCM"
+    },
+    {
+      "index": "fa-hcm-organization",
+      "area": "HCM"
+    },
+    {
+      "index": "fa-hcm-personprofile",
+      "area": "HCM"
+    },
+    {
+      "index": "fa-hcm-modelprofile",
+      "area": "HCM"
+    },
+    {
+      "index": "fa-hcm-personbenefits",
+      "area": "Benefits"
+    },
+    {
+      "index": "fa-hcm-timecard",
+      "area": "Time and Labor"
+    },
+    {
+      "index": "fa-hcm-requisition",
+      "area": "Recruiting"
+    },
+    {
+      "index": "fa-hcm-irc-geohierarchies",
+      "area": "Recruiting"
+    },
+    {
+      "index": "fa-hcm-workerjourney",
+      "area": "Journeys"
+    },
+    {
+      "index": "fa-hcm-workerjourneytask",
+      "area": "Journeys"
+    },
+    {
+      "index": "fa-hcm-savedsearch",
+      "area": "Saved searches"
+    },
+    {
+      "index": "fa-hcm-learningitem",
+      "area": "Learning",
+      "notes": "Oracle order: learningitem, then learn-acl, then learningrecord"
+    },
+    {
+      "index": "fa-hcm-learn-acl",
+      "area": "Learning security",
+      "notes": "ACL index, refilled by the Learning ACL job"
+    },
+    {
+      "index": "fa-hcm-learningrecord",
+      "area": "Learning"
+    },
+    {
+      "index": "fa-hcm-learningassignmentprofile",
+      "area": "Learning",
+      "notes": "New in 26D"
+    },
+    {
+      "index": "fa-hcm-mylearningassignments",
+      "area": "Learning",
+      "notes": "New in 26D"
+    },
+    {
+      "index": "fa-hcm-learningrecommendation",
+      "area": "Learning",
+      "notes": "New in 26D"
+    },
+    {
+      "index": "fa-fin-exm-expenses",
+      "area": "Expenses"
+    },
+    {
+      "index": "fa-fin-exm-reports",
+      "area": "Expenses"
+    },
+    {
+      "index": "fa-fin-exm-locations",
+      "area": "Expenses"
+    },
+    {
+      "index": "fa-prc-shoppingcatalog",
+      "area": "Procurement"
+    },
+    {
+      "index": "fa-prc-por",
+      "area": "Procurement"
+    },
+    {
+      "index": "fa-prc-pa",
+      "area": "Procurement",
+      "notes": "0 rows in Prod is normal"
+    },
+    {
+      "index": "fa-prc-poi",
+      "area": "Procurement",
+      "verify": true
+    },
+    {
+      "index": "fa-prc-suppliers",
+      "area": "Procurement"
+    },
+    {
+      "index": "fnd-worklist-approvals",
+      "area": "Platform",
+      "verify": true
+    },
+    {
+      "index": "fnd-ao-tasks-and-places",
+      "area": "Platform (Ask Oracle)",
+      "verify": true
+    },
+    {
+      "index": "fnd-ao-tasks-and-places-sandbox",
+      "area": "Platform (Ask Oracle)",
+      "verify": true
+    },
+    {
+      "index": "fnd-recentsearch",
+      "area": "Platform",
+      "verify": true
+    }
+  ],
+  "aclSteps": [
+    "computeUsersAcl",
+    "learningAcl"
+  ]
+}
