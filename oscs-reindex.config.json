@@ -7,7 +7,8 @@
     "Each job picks an API: \"erp\" = /fscmRestApi/.../erpintegrations submitESSJobRequest; \"ess\" = /ess/rest/scheduler/v1/requests (needs \"application\").",
     "args are passed in order (submit.argument1, 2, ...). \"{index}\" is replaced with the step index name. Values marked _verify need confirming in a non-Prod instance; use Inspect request on a past successful request to read its parameters.",
     "\"extraParameters\" (ess only) adds named request parameters, e.g. {\"name\": \"SYS_effectiveApplication\", \"value\": \"EarHcmEss\"}.",
-    "An argument with \"omit\": true is deliberately not passed (ERP: empty slot; ESS: that submit.argumentN is left out). Not allowed for the ingest job."
+    "An argument with \"omit\": true is deliberately not passed (ERP: empty slot; ESS: that submit.argumentN is left out). Not allowed for the ingest job.",
+    "\"stopOnRetry\": true stops the run as soon as Oracle starts auto-retrying a failed request, instead of waiting for the retries or the time limit."
   ],
   "prodHosts": [
     "fa-exci-saasfaprod1.fa.ocs.oraclecloud.com"
@@ -15,6 +16,7 @@
   "nonProdHostPattern": "^fa-exci-((?:dev|test)\\d*)-saasfaprod1\\.fa\\.ocs\\.oraclecloud\\.com$",
   "pollSeconds": 30,
   "maxStatusFailures": 10,
+  "stopOnRetry": true,
   "busyRetry": {
     "waitMinutes": 5,
     "maxRetries": 3

@@ -86,7 +86,7 @@ async function check(name, fn) {
   }
 
   // Fake Oracle: logFor(job, args) returns the log text; statusFor returns the final status.
-  function fakeOracle({ logFor, statusFor = () => 'SUCCEEDED' }) {
+  function fakeOracle({ logFor, statusFor = () => 'SUCCEEDED', essFor = null }) {
     const submitted = [];
     let nextId = 1000;
     const jobs = new Map();
@@ -110,8 +110,8 @@ async function check(name, fn) {
       }
       const st = url.match(/ESSJobStatusRF;requestId=(\d+)/);
       if (st) return json({ items: [{ RequestStatus: statusFor(jobs.get(st[1])) }] });
-      const ess = url.match(/\/requests\/(\d+)$/);
-      if (ess) return json({ state: statusFor(jobs.get(ess[1])) === 'SUCCEEDED' ? 12 : 10 });
+      const ess = url.match(/\/requests\/(\d+)(?:\?|$)/);
+      if (ess) return json(essFor?.(jobs.get(ess[1])) ?? { state: statusFor(jobs.get(ess[1])) === 'SUCCEEDED' ? 12 : 10 });
       const lg = url.match(/ESSJobExecutionDetailsRF;requestId=(\d+)/);
       if (lg) {
         const j = jobs.get(lg[1]);
@@ -236,6 +236,31 @@ async function check(name, fn) {
     const cfg = testConfig();
     const log = 'Fetching the scheduled index name for recreate: fa-hcm-acl\nOnly performing recreate for index - fa-hcm-acl\nduration= 0:0:0:8:0.';
     assert.deepStrictEqual(oscsMod.checkLog(cfg.jobs.ingest, { index: 'fa-hcm-acl' }, log), { issues: [], rows: null, recreateOnly: true });
+  });
+
+  await check('OSCS: a request Oracle is auto-retrying stops the run as an error right away', async () => {
+    const steps = [{ index: 'fa-hcm-fake' }, { index: 'fa-hcm-person' }];
+    const oracle = fakeOracle({
+      logFor: goodLog,
+      statusFor: j => (j.args[0] === 'fa-hcm-fake' ? 'WAIT' : 'SUCCEEDED'),
+      essFor: j => (j.args[0] === 'fa-hcm-fake' ? { state: 'WAIT', retriedCount: 1, errorWarningMessage: 'Index not found' } : null),
+    });
+    const { last } = await runToEnd(testConfig(steps), oracle, {});
+    assert.strictEqual(last.status, 'stopped');
+    assert.strictEqual(last.steps[0].status, 'ERROR');
+    assert.match(last.steps[0].issues[0], /retrying request .*retried 1 time.*Index not found/);
+    assert.ok(!oracle.submitted.some(s => s.args === 'fa-hcm-person,false'));
+  });
+
+  await check('OSCS: retry check ignores healthy waiting requests', async () => {
+    let polls = 0;
+    const oracle = fakeOracle({
+      logFor: goodLog,
+      statusFor: () => (++polls < 3 ? 'WAIT' : 'SUCCEEDED'),
+      essFor: () => ({ state: 'WAIT', retriedCount: null, executionAttempt: 1, previousState: null }),
+    });
+    const { last } = await runToEnd(testConfig([{ index: 'fa-hcm-job' }]), oracle, { mode: 'single', stepId: 'ingest:fa-hcm-job' });
+    assert.strictEqual(last.steps[0].status, 'SUCCEEDED');
   });
 
   await check('OSCS: omitted arguments leave an empty ERP slot and are rejected for ingest', () => {

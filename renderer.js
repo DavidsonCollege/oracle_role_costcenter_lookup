@@ -633,9 +633,9 @@ function oscsRender(run) {
       <td>${i + 1}</td>
       <td class="mono">${esc(s.label)}${s.verify ? ' <span class="oscs-hint">verify</span>' : ''}</td>
       <td><span class="st st-${esc(st)}">${esc(s.status)}</span>${oracle}${issues}${note}${log}</td>
-      <td class="mono">${esc(s.requestId ?? '')}</td>
-      <td>${esc(formatTime(s.submittedAt))}</td>
-      <td>${esc(formatTime(s.endedAt))}</td>
+      <td class="mono nowrap">${esc(s.requestId ?? '')}</td>
+      <td class="nowrap">${esc(formatTime(s.submittedAt))}</td>
+      <td class="nowrap">${esc(formatTime(s.endedAt))}</td>
       <td>${s.rows != null ? esc(s.rows.toLocaleString()) : s.recreateOnly ? '<span class="oscs-hint" title="ACL index: recreated empty here, filled by its ACL job at the end">recreate only</span>' : ''}</td>
     </tr>`;
   }).join('');

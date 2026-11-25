@@ -379,7 +379,8 @@ function makeApi({ fetch, baseUrl, authHeader }) {
   // By default Oracle returns only requestId/state/stateDescription, so Inspect
   // asks for the fields it needs. If the field list is rejected, fall back.
   const DETAIL_FIELDS = 'requestId,state,stateDescription,jobDefinitionId,jobDisplayName,application,'
-    + 'submitter,submissionTime,processStartTime,processEndTime,errorWarningMessage,requestParameters';
+    + 'submitter,submissionTime,processStartTime,processEndTime,errorWarningMessage,requestParameters,'
+    + 'previousState,retriedCount,executionAttempt';
 
   async function essRequest(id, { detailed = false } = {}) {
     const url = `${base}${ESS_PATH}/${checkId(id)}`;
@@ -401,21 +402,35 @@ function makeApi({ fetch, baseUrl, authHeader }) {
     return s;
   }
 
+  // A request Oracle is auto-retrying has already failed once. Signs differ by
+  // API and release, so check several. Returns null when there's no sign.
+  async function retrySignal(id) {
+    const j = await essRequest(id, { detailed: true });
+    const reasons = [];
+    const st = normalizeStatus(j?.state);
+    if (st && /RETRY/.test(st)) reasons.push(`state ${st}`);
+    if (/retry/i.test(String(j?.stateDescription ?? ''))) reasons.push(`"${j.stateDescription}"`);
+    if (Number(j?.retriedCount) > 0) reasons.push(`retried ${j.retriedCount} time(s)`);
+    if (Number(j?.executionAttempt) > 1) reasons.push(`attempt ${j.executionAttempt}`);
+    if (normalizeStatus(j?.previousState) === 'ERROR') reasons.push('previous state ERROR');
+    return reasons.length ? { reasons, message: j?.errorWarningMessage ?? null } : null;
+  }
+
   // Only ERP Integrations documents a log download, so both APIs use it.
   async function log(id) {
     const url = `${base}${ERP_PATH}?finder=ESSJobExecutionDetailsRF;requestId=${checkId(id)},fileType=LOG`;
     const r = await call(url, { headers: headers() }, 120000);
     if (!r.res.ok) throw httpError('Log download', r);
     const b64 = r.json?.items?.[0]?.DocumentContent;
-    if (!b64) throw new Error(`Oracle returned no log for request ${id}.`);
+    if (!b64) throw new Error(`Oracle has no log for request ${id}; the job probably never ran.`);
     const files = unzipEntries(Buffer.from(b64, 'base64'));
-    if (files.length === 0) throw new Error(`The log download for request ${id} had no text files.`);
+    if (files.length === 0) throw new Error(`Oracle has no log for request ${id}; the job probably never ran.`);
     return files.map(f => `===== ${f.name} =====\n${f.text}`).join('\n');
   }
 
   return {
     submit: (job, args) => (job.api === 'ess' ? submitEss(job, args) : submitErp(job, args)),
-    status, log, essRequest, erpStatusRaw,
+    status, log, essRequest, erpStatusRaw, retrySignal,
   };
 }
 
@@ -539,7 +554,18 @@ function createReindexer({ fetch, dataDir, defaultConfigPath, onProgress, onAler
         failures = 0;
         if (s !== step.oracleStatus) { step.oracleStatus = s; emit(run); }
         if (isFinalStatus(s)) return s;
+        if (config.stopOnRetry !== false) {
+          let retry = null;
+          try { retry = await active.api.retrySignal(step.requestId); } catch { /* can't tell; keep waiting */ }
+          if (retry) {
+            const err = new Error(`Oracle is retrying request ${step.requestId} after it failed (${retry.reasons.join(', ')})`
+              + `${retry.message ? `: ${retry.message}` : ''}.`);
+            err.retrying = true;
+            throw err;
+          }
+        }
       } catch (e) {
+        if (e.retrying) throw e;
         failures++;
         step.note = `Status check failed (${failures}): ${e.message}`;
         emit(run);
@@ -584,6 +610,12 @@ function createReindexer({ fetch, dataDir, defaultConfigPath, onProgress, onAler
       try {
         final = await waitForFinal(run, step, job, config);
       } catch (e) {
+        if (e.retrying) {
+          Object.assign(step, { status: 'ERROR', oracleStatus: 'RETRYING', endedAt: iso(),
+            issues: [`${e.message} Stopped instead of waiting for the retries. Oracle keeps retrying it; cancel it in Scheduled Processes if it shouldn't run.`] });
+          emit(run);
+          return step.status;
+        }
         Object.assign(step, { status: 'UNKNOWN', endedAt: iso(),
           issues: [`${e.message} The job may still be running in Oracle; check Scheduled Processes.`] });
         emit(run);
