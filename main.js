@@ -178,6 +178,14 @@ ipcMain.handle('oscs:openConfig', async () => {
   }
 });
 
+ipcMain.handle('oscs:resetConfig', () => {
+  try {
+    return { ok: true, ...getReindexer().resetUserConfig() };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
 ipcMain.handle('oscs:openRunsFolder', async () => {
   const dir = getReindexer().runsDir;
   fs.mkdirSync(dir, { recursive: true });

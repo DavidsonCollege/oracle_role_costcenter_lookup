@@ -145,11 +145,11 @@ async function check(name, fn) {
     return { res, alerts, reindexer: r, dir, last: alerts.at(-1)?.run };
   }
 
-  await check('shipped OSCS config is valid, with 34 unique non-blank indexes and every job complete', () => {
+  await check('shipped OSCS config is valid, with 30 unique non-blank indexes and every job complete', () => {
     const cfg = JSON.parse(fs.readFileSync(defaultCfgPath, 'utf8'));
     const v = oscsMod.validateConfig(cfg);
     assert.deepStrictEqual(v.errors, []);
-    assert.strictEqual(cfg.steps.length, 34);
+    assert.strictEqual(cfg.steps.length, 30);
     assert.deepStrictEqual(v.jobErrors, { ingest: [], computeUsersAcl: [], learningAcl: [] });
   });
 
@@ -221,7 +221,7 @@ async function check(name, fn) {
   await check('OSCS: Compute Users ACL count is read from the real log wording; low count warns', () => {
     const cfg = testConfig();
     const log = n => `Entering execute()- Compute Users ACL ...ALL_USERS\nCompute Users ACL: exiting getAllUsers().  Count- ${n}\nLongRunning Users Count: 0\n#Remaining Users 21\t| 300000120199796\t| 69025\nCompute Users ACL... done`;
-    assert.deepStrictEqual(oscsMod.checkLog(cfg.jobs.computeUsersAcl, {}, log(4578)), { issues: [], rows: 4578 });
+    assert.deepStrictEqual(oscsMod.checkLog(cfg.jobs.computeUsersAcl, {}, log(4578)), { issues: [], rows: 4578, recreateOnly: false });
     assert.match(oscsMod.checkLog(cfg.jobs.computeUsersAcl, {}, log(120)).issues[0], /far below/);
     assert.ok(!oscsMod.logExcerpt(log(4578)).includes('#Remaining Users'));
   });
@@ -229,7 +229,13 @@ async function check(name, fn) {
   await check('OSCS: Learning ACL count comes from "ASE active user Count", not other learner numbers', () => {
     const cfg = testConfig();
     const log = 'Wed Nov 25 21:01:10 UTC 2026: ASE active user Count: 1353\nProcessed 995 learners\nLi count : 2';
-    assert.deepStrictEqual(oscsMod.checkLog(cfg.jobs.learningAcl, {}, log), { issues: [], rows: 1353 });
+    assert.deepStrictEqual(oscsMod.checkLog(cfg.jobs.learningAcl, {}, log), { issues: [], rows: 1353, recreateOnly: false });
+  });
+
+  await check('OSCS: ACL index ingest logs are marked recreate only', () => {
+    const cfg = testConfig();
+    const log = 'Fetching the scheduled index name for recreate: fa-hcm-acl\nOnly performing recreate for index - fa-hcm-acl\nduration= 0:0:0:8:0.';
+    assert.deepStrictEqual(oscsMod.checkLog(cfg.jobs.ingest, { index: 'fa-hcm-acl' }, log), { issues: [], rows: null, recreateOnly: true });
   });
 
   await check('OSCS: omitted arguments leave an empty ERP slot and are rejected for ingest', () => {
@@ -239,6 +245,25 @@ async function check(name, fn) {
     assert.strictEqual(args.map(a => (a.omit ? '' : oscsMod.erpArg(a.value))).join(','), 'A,,5');
     assert.throws(() => oscsMod.assertSubmittable({ kind: 'ingest', index: 'fa-hcm-job' },
       [{ value: 'fa-hcm-job' }, { omit: true }]), /cannot be omitted/);
+  });
+
+  await check('OSCS: personal config differences are listed, and reset backs up the old copy', () => {
+    const shipped = JSON.parse(fs.readFileSync(defaultCfgPath, 'utf8'));
+    assert.strictEqual(oscsMod.summarizeConfigDiff(shipped, shipped), null);
+    const mine = JSON.parse(JSON.stringify(shipped));
+    mine._readme = ['edited'];
+    assert.strictEqual(oscsMod.summarizeConfigDiff(mine, shipped), null, '_readme changes are ignored');
+    mine.steps.push({ index: 'fa-prc-poi' });
+    mine.jobs.ingest.timeoutMinutes = 99;
+    const diffs = oscsMod.summarizeConfigDiff(mine, shipped);
+    assert.ok(diffs.some(d => /Only in your copy: fa-prc-poi/.test(d)));
+    assert.ok(diffs.some(d => /Job settings differ: ingest/.test(d)));
+
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oscs-reset-'));
+    fs.writeFileSync(path.join(dir, 'oscs-reindex.config.json'), JSON.stringify(mine));
+    const { backup, userPath } = oscsMod.resetUserConfig(dir, defaultCfgPath);
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(backup, 'utf8')), mine);
+    assert.strictEqual(fs.readFileSync(userPath, 'utf8'), fs.readFileSync(defaultCfgPath, 'utf8'));
   });
 
   await check('OSCS: full run is refused while an ACL job is incomplete in the config', async () => {

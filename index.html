@@ -562,6 +562,17 @@
       overflow: auto;
       margin-top: 0.4rem;
     }
+    .oscs-diff {
+      font-size: 0.8rem;
+      line-height: 1.5;
+      color: #1e3a5f;
+      background: #eff6ff;
+      border: 1px solid #93c5fd;
+      border-radius: 6px;
+      padding: 0.6rem 0.8rem;
+      margin-bottom: 0.8rem;
+    }
+    .oscs-diff ul { margin: 0.4rem 0 0.6rem 1.2rem; }
     .oscs-runhead { font-size: 0.82rem; margin-top: 0.8rem; }
     .oscs-boxhead { display: flex; align-items: center; justify-content: space-between; }
     .btn-copy { font-size: 0.72rem; padding: 0.2rem 0.6rem; }
@@ -662,6 +673,12 @@
       </div>
 
       <div id="oscsConfigMsg" class="oscs-msg"></div>
+      <div id="oscsConfigDiff" class="oscs-diff" hidden>
+        <p><strong>Your config differs from the one shipped with this version of the app.</strong> Your copy is what the app uses. If you didn't change it on purpose, replace it so you get the latest step list and job settings.</p>
+        <ul id="oscsConfigDiffList"></ul>
+        <button id="oscsResetConfigBtn" class="btn-secondary">Replace with shipped config</button>
+        <span class="oscs-hint">Your current copy is saved as a backup first.</span>
+      </div>
 
       <div class="oscs-row">
         <select id="oscsMode" aria-label="Run type">

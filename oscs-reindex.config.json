@@ -3,7 +3,7 @@
     "Config for the Search Index Rebuild feature (see OSCS_REINDEX_FEATURE.md).",
     "Edit steps to add, remove or reorder indexes. Never leave an index name blank: a blank name rebuilds every index, and the app refuses to submit it.",
     "Steps with \"verify\": true warn (and stop) if they ingest 0 rows. If one fails or loads 0 rows during testing, remove it.",
-    "Leave out (Oracle-managed or not used at Davidson): fnd-attachments, fa-crm-productcatalog, fa-scm-rcv-aprcpt, fa-scm-msc-lead-time-orders, fa-scm-msc-lead-time-insights, fa-psc-apo-parcel.",
+    "Leave out (Oracle-managed or not used at Davidson): fnd-attachments, fa-crm-productcatalog, fa-scm-rcv-aprcpt, fa-scm-msc-lead-time-orders, fa-scm-msc-lead-time-insights, fa-psc-apo-parcel. Removed after testing: fa-prc-poi (0 rows on dev1, request 10534408, 11/25/2026), fnd-worklist-approvals (0 rows on dev1, request 10534443, 11/25/2026), fnd-ao-tasks-and-places (0 rows on dev1, request 10534445, 11/25/2026), fnd-ao-tasks-and-places-sandbox (0 rows on dev1, request 10534446, 11/25/2026).",
     "Each job picks an API: \"erp\" = /fscmRestApi/.../erpintegrations submitESSJobRequest; \"ess\" = /ess/rest/scheduler/v1/requests (needs \"application\").",
     "args are passed in order (submit.argument1, 2, ...). \"{index}\" is replaced with the step index name. Values marked _verify need confirming in a non-Prod instance; use Inspect request on a past successful request to read its parameters.",
     "\"extraParameters\" (ess only) adds named request parameters, e.g. {\"name\": \"SYS_effectiveApplication\", \"value\": \"EarHcmEss\"}.",
@@ -240,28 +240,8 @@
       "notes": "0 rows in Prod is normal"
     },
     {
-      "index": "fa-prc-poi",
-      "area": "Procurement",
-      "verify": true
-    },
-    {
       "index": "fa-prc-suppliers",
       "area": "Procurement"
-    },
-    {
-      "index": "fnd-worklist-approvals",
-      "area": "Platform",
-      "verify": true
-    },
-    {
-      "index": "fnd-ao-tasks-and-places",
-      "area": "Platform (Ask Oracle)",
-      "verify": true
-    },
-    {
-      "index": "fnd-ao-tasks-and-places-sandbox",
-      "area": "Platform (Ask Oracle)",
-      "verify": true
     },
     {
       "index": "fnd-recentsearch",

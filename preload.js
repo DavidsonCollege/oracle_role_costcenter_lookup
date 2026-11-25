@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld('hcmAPI', {
   oscsConfig        : (params) => ipcRenderer.invoke('oscs:config',          params),
   oscsOpenConfig    : ()       => ipcRenderer.invoke('oscs:openConfig'),
   oscsOpenRunsFolder: ()       => ipcRenderer.invoke('oscs:openRunsFolder'),
+  oscsResetConfig   : ()       => ipcRenderer.invoke('oscs:resetConfig'),
   oscsListRuns      : ()       => ipcRenderer.invoke('oscs:listRuns'),
   oscsStart         : (params) => ipcRenderer.invoke('oscs:start',           params),
   oscsStop          : ()       => ipcRenderer.invoke('oscs:stop'),

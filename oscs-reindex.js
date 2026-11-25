@@ -68,6 +68,42 @@ function ensureUserConfig(dataDir, defaultPath) {
   return userPath;
 }
 
+// What differs between a personal copy and the shipped config, or null if
+// nothing does. _readme text is ignored.
+function summarizeConfigDiff(user, shipped) {
+  const names = c => (Array.isArray(c.steps) ? c.steps.map(s => s?.index) : []);
+  const u = names(user), d = names(shipped);
+  const diffs = [];
+  const onlyYours = u.filter(x => !d.includes(x));
+  const onlyShipped = d.filter(x => !u.includes(x));
+  if (onlyYours.length) diffs.push(`Only in your copy: ${onlyYours.join(', ')}`);
+  if (onlyShipped.length) diffs.push(`Only in the shipped config: ${onlyShipped.join(', ')}`);
+  const common = u.filter(x => d.includes(x));
+  if (common.join() !== d.filter(x => u.includes(x)).join()) diffs.push('Steps are in a different order.');
+  else if (JSON.stringify(user.steps?.filter(s => d.includes(s?.index))) !== JSON.stringify(shipped.steps?.filter(s => u.includes(s?.index)))) {
+    diffs.push('Some step settings differ (area, notes or "verify").');
+  }
+  const jobKeys = [...new Set([...Object.keys(user.jobs ?? {}), ...Object.keys(shipped.jobs ?? {})])];
+  const changedJobs = jobKeys.filter(k => JSON.stringify(user.jobs?.[k]) !== JSON.stringify(shipped.jobs?.[k]));
+  if (changedJobs.length) diffs.push(`Job settings differ: ${changedJobs.join(', ')}`);
+  const rest = c => JSON.stringify({ ...c, _readme: null, steps: null, jobs: null });
+  if (rest(user) !== rest(shipped)) diffs.push('Other settings differ (Prod hosts, polling, retries or ACL steps).');
+  return diffs.length ? diffs : null;
+}
+
+// Backs up the personal copy, then replaces it with the shipped config.
+function resetUserConfig(dataDir, defaultPath) {
+  const userPath = userConfigPath(dataDir);
+  let backup = null;
+  if (fs.existsSync(userPath)) {
+    backup = path.join(dataDir, `oscs-reindex.config.backup-${new Date().toISOString().replace(/[:.]/g, '-')}.json`);
+    fs.copyFileSync(userPath, backup);
+  }
+  fs.mkdirSync(dataDir, { recursive: true });
+  fs.copyFileSync(defaultPath, userPath);
+  return { userPath, backup };
+}
+
 function validateJob(job, key) {
   if (!job) return [`Job "${key}" is missing from the config.`];
   const e = [];
@@ -227,8 +263,12 @@ function checkLog(job, step, log) {
   const c = job.logCheck ?? { type: 'none' };
   const issues = [];
   let rows = null;
+  let recreateOnly = false;
 
   if (c.type === 'ingest') {
+    // ACL indexes (fa-hcm-acl, fa-hcm-learn-acl) are only recreated empty;
+    // their ACL jobs fill them later, so there's no row count to read.
+    recreateOnly = /Only performing recreate for index/i.test(log);
     const failed = sumMatches(log, c.rowsFailedPattern);
     const notIngested = sumMatches(log, c.notIngestedPattern);
     rows = sumMatches(log, c.rowsPattern);
@@ -249,7 +289,7 @@ function checkLog(job, step, log) {
       if (rows != null && c.minCount && rows < c.minCount) issues.push(`Count ${rows} is far below the expected ${c.expectedCount ?? c.minCount}.`);
     }
   }
-  return { issues, rows };
+  return { issues, rows, recreateOnly };
 }
 
 function logExcerpt(log, maxLines = 16) {
@@ -453,18 +493,32 @@ function createReindexer({ fetch, dataDir, defaultConfigPath, onProgress, onAler
 
   function formatSummary(run) {
     const mins = Math.round((new Date(run.endedAt) - new Date(run.startedAt)) / 60000);
-    const lines = [`:white_check_mark: *OSCS index rebuild finished* on *${run.instance}* (${run.steps.length} steps, ${mins} min)`];
+    const resumed = run.resumes?.length ? `, resumed ${run.resumes.length} time${run.resumes.length === 1 ? '' : 's'}` : '';
+    const lines = [`:white_check_mark: *OSCS index rebuild finished* on *${run.instance}* (${run.steps.length} steps, ${mins} min${resumed})`];
     for (const s of run.steps) {
-      lines.push(`${s.status === 'SUCCEEDED' ? '✓' : '•'} ${s.index ?? s.label}: ${s.status}${s.requestId ? ` (request ${s.requestId})` : ''}${s.rows != null ? `, ${s.rows.toLocaleString()} rows` : ''}`);
+      lines.push(`${s.status === 'SUCCEEDED' ? '✓' : '•'} ${s.index ?? s.label}: ${s.status}${s.requestId ? ` (request ${s.requestId})` : ''}${s.rows != null ? `, ${s.rows.toLocaleString()} rows` : s.recreateOnly ? ', recreate only' : ''}`);
     }
     return lines.join('\n');
+  }
+
+  // Short version for the in-app dialog; the table on the tab has the detail.
+  function formatSummaryShort(run) {
+    const mins = Math.round((new Date(run.endedAt) - new Date(run.startedAt)) / 60000);
+    const ok = run.steps.filter(s => s.status === 'SUCCEEDED').length;
+    const acl = run.steps.filter(s => s.kind === 'acl' && s.rows != null).map(s => `${s.label}: ${s.rows.toLocaleString()}`);
+    return [
+      `${ok} of ${run.steps.length} steps succeeded on ${run.instance} in ${mins} min${run.resumes?.length ? ` (resumed ${run.resumes.length} time${run.resumes.length === 1 ? '' : 's'})` : ''}.`,
+      ...acl,
+      'See the table on the Scheduled Processes tab for every step.',
+    ].join('\n');
   }
 
   async function alert(run, level, text, step) {
     const slack = await postSlack(text);
     run.alerts.push({ at: iso(), level, slack, text });
     emit(run);
-    onAlert?.({ level, text, slack, run: clone(run), stepLabel: step?.label ?? null });
+    const dialogText = level === 'complete' && run.mode !== 'single' ? formatSummaryShort(run) : text;
+    onAlert?.({ level, text: dialogText, slack, run: clone(run), stepLabel: step?.label ?? null });
   }
 
   function finish(run, status, reason) {
@@ -548,6 +602,7 @@ function createReindexer({ fetch, dataDir, defaultConfigPath, onProgress, onAler
         const res = log != null ? checkLog(job, step, log)
           : { rows: null, issues: job.requireLogCheck === false ? [] : [`Couldn't read the log to check it: ${logErr}`] };
         step.rows = res.rows;
+        step.recreateOnly = res.recreateOnly === true;
         step.issues = res.issues;
         step.status = res.issues.length ? 'WARNING' : 'SUCCEEDED';
       } else {
@@ -691,7 +746,12 @@ function createReindexer({ fetch, dataDir, defaultConfigPath, onProgress, onAler
       const { config, path: p, isUserCopy } = loadConfig(dataDir, defaultConfigPath);
       const v = validateConfig(config);
       const inst = baseUrl ? checkInstance(baseUrl, config) : null;
-      return { ok: true, path: p, isUserCopy, steps: planSteps(config), errors: v.errors, jobErrors: v.jobErrors, instance: inst };
+      let differences = null;
+      if (isUserCopy) {
+        try { differences = summarizeConfigDiff(config, JSON.parse(fs.readFileSync(defaultConfigPath, 'utf8'))); }
+        catch { differences = ["Couldn't read the shipped config to compare."]; }
+      }
+      return { ok: true, path: p, isUserCopy, differences, steps: planSteps(config), errors: v.errors, jobErrors: v.jobErrors, instance: inst };
     } catch (e) {
       return { ok: false, error: `Couldn't read the config file: ${e.message}` };
     }
@@ -704,12 +764,17 @@ function createReindexer({ fetch, dataDir, defaultConfigPath, onProgress, onAler
     current  : () => (active ? clone(active.run) : null),
     runsDir,
     ensureUserConfig: () => ensureUserConfig(dataDir, defaultConfigPath),
+    resetUserConfig: () => {
+      if (active) throw new Error("Can't replace the config while a rebuild is running.");
+      return resetUserConfig(dataDir, defaultConfigPath);
+    },
   };
 }
 
 module.exports = {
   createReindexer,
   // Exported for test/smoke.js
+  summarizeConfigDiff, resetUserConfig,
   normalizeStatus, isFinalStatus, isIndexBusy, validateConfig, checkInstance, planSteps,
   buildArgs, assertSubmittable, erpArg, unzipEntries, checkLog, logExcerpt, headTail, makeApi,
 };

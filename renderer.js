@@ -540,6 +540,10 @@ async function oscsLoadConfig() {
     ? 'A Slack webhook is saved (encrypted on this computer).'
     : 'No Slack webhook saved. Alerts will only show in the app.', 'oscs-hint');
 
+  const diffBox = document.getElementById('oscsConfigDiff');
+  diffBox.hidden = !info.differences;
+  document.getElementById('oscsConfigDiffList').innerHTML = (info.differences ?? []).map(d => `<li>${esc(d)}</li>`).join('');
+
   if (info.running) oscsRender(info.running);
   await oscsLoadRuns();
 }
@@ -555,9 +559,12 @@ async function oscsLoadRuns() {
 
 // Default the resume point to the first step that didn't succeed.
 function oscsSuggestResumeStep() {
+  // Uses the current config's steps, so an index removed from the config is skipped.
   const run = oscs.runs.find(r => r.id === document.getElementById('oscsRun').value);
-  const firstOpen = run?.steps.find(s => s.status !== 'SUCCEEDED');
-  if (firstOpen && oscs.steps.some(s => s.id === firstOpen.id)) document.getElementById('oscsFromStep').value = firstOpen.id;
+  if (!run) return;
+  const done = new Set(run.steps.filter(s => s.status === 'SUCCEEDED').map(s => s.id));
+  const firstOpen = oscs.steps.find(s => !done.has(s.id));
+  if (firstOpen) document.getElementById('oscsFromStep').value = firstOpen.id;
 }
 
 function oscsModeChanged() {
@@ -629,7 +636,7 @@ function oscsRender(run) {
       <td class="mono">${esc(s.requestId ?? '')}</td>
       <td>${esc(formatTime(s.submittedAt))}</td>
       <td>${esc(formatTime(s.endedAt))}</td>
-      <td>${s.rows != null ? esc(s.rows.toLocaleString()) : ''}</td>
+      <td>${s.rows != null ? esc(s.rows.toLocaleString()) : s.recreateOnly ? '<span class="oscs-hint" title="ACL index: recreated empty here, filled by its ACL job at the end">recreate only</span>' : ''}</td>
     </tr>`;
   }).join('');
 
@@ -711,6 +718,13 @@ document.getElementById('oscsOpenConfigBtn').addEventListener('click', async () 
   else oscsLoadConfig();
 });
 document.getElementById('oscsReloadBtn').addEventListener('click', oscsLoadConfig);
+document.getElementById('oscsResetConfigBtn').addEventListener('click', async () => {
+  if (!confirm('Replace your config with the shipped one? Your current copy will be saved as a backup.')) return;
+  const r = await window.hcmAPI.oscsResetConfig();
+  await oscsLoadConfig();
+  if (!r.ok) oscsMsg('oscsConfigMsg', r.error, 'bad');
+  else if (r.backup) oscsMsg('oscsConfigMsg', `Config replaced. Your old copy was saved as ${r.backup}`, 'good');
+});
 document.getElementById('oscsRunsBtn').addEventListener('click', () => window.hcmAPI.oscsOpenRunsFolder());
 document.getElementById('oscsInspectBtn').addEventListener('click', oscsInspect);
 document.getElementById('oscsInspectId').addEventListener('keydown', e => { if (e.key === 'Enter') oscsInspect(); });
