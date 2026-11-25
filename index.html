@@ -488,7 +488,31 @@
     .radio-label input[type="radio"] { cursor: pointer; }
 
     /* ── Search Index Rebuild section ────────────────────────────────────── */
-    .oscs > summary { cursor: pointer; list-style: revert; margin-bottom: 0.9rem; }
+    /* ── Tabs ─────────────────────────────────────────────────────────────── */
+    .tabs {
+      display: flex;
+      gap: 0.25rem;
+      border-bottom: 1.5px solid #e5e7eb;
+      margin: 1.75rem 0 1.5rem;
+    }
+    .tabs .tab {
+      background: none;
+      color: #6b7280;
+      border: none;
+      border-bottom: 2.5px solid transparent;
+      border-radius: 0;
+      margin-bottom: -1.5px;
+      padding: 0.55rem 1rem;
+      font-size: 0.88rem;
+      font-weight: 600;
+    }
+    .tabs .tab:hover:not(:disabled) { background: none; color: #374151; }
+    .tabs .tab[aria-selected="true"] { color: #c74634; border-bottom-color: #c74634; }
+    .tabs .tab:focus-visible { outline: 2px solid #c74634; outline-offset: 2px; }
+    .tab .tab-dot {
+      display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+      background: #2563eb; margin-left: 0.4rem; vertical-align: middle;
+    }
     .oscs-note {
       font-size: 0.8rem;
       line-height: 1.5;
@@ -581,6 +605,12 @@
       </div>
     </div>
 
+    <div class="tabs" role="tablist" aria-label="Tools">
+      <button class="tab" role="tab" id="tab-lookups" aria-controls="panel-lookups" aria-selected="true" data-tab="lookups">Lookups</button>
+      <button class="tab" role="tab" id="tab-scheduled" aria-controls="panel-scheduled" aria-selected="false" data-tab="scheduled" tabindex="-1">Scheduled Processes</button>
+    </div>
+
+    <div class="tab-panel" role="tabpanel" id="panel-lookups" aria-labelledby="tab-lookups">
     <p class="section-label">Person Lookup</p>
     <div class="lookup-row">
       <input type="text" id="personNumber" placeholder="Person Number or Name" />
@@ -620,11 +650,10 @@
     </div>
 
     <div class="result" id="accessResult"></div>
+    </div>
 
-    <hr class="section-divider" />
-
-    <details class="oscs" id="oscsSection">
-      <summary class="section-label">Search Index Rebuild (after a refresh)</summary>
+    <div class="tab-panel oscs" role="tabpanel" id="panel-scheduled" aria-labelledby="tab-scheduled" hidden>
+      <p class="section-label">Search Index Rebuild (after a refresh)</p>
 
       <div class="oscs-note">
         Use only after a Prod-to-Test refresh of a non-Prod instance. <strong>Don't run this after quarterly updates</strong>: Oracle reingests changed indexes itself during updates.
@@ -674,7 +703,7 @@
         <button id="oscsInspectBtn" class="btn-secondary">Inspect</button>
       </div>
       <div id="oscsInspectOut"></div>
-    </details>
+    </div>
 
     <p class="note">Credentials are never stored. All requests are made securely via the desktop app — no browser CORS restrictions.<br><span id="appVersion" style="opacity:0.6"></span><br><span id="feedbackLink" style="opacity:0.85; font-size:0.85em; cursor:pointer;">Suggestions or bug reports? <u>Email jedonovan@davidson.edu</u></span></p>
   </div>

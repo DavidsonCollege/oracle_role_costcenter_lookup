@@ -722,9 +722,45 @@ document.getElementById('oscsSlackTestBtn').addEventListener('click', async () =
 });
 // The confirmation hint depends on the selected environment.
 document.getElementById('baseUrl').addEventListener('change', () => {
-  if (document.getElementById('oscsSection').open) oscsLoadConfig();
+  if (activeTab === 'scheduled') oscsLoadConfig();
 });
-document.getElementById('oscsSection').addEventListener('toggle', e => {
-  if (e.currentTarget.open) oscsLoadConfig();
+window.hcmAPI.onOscsProgress(run => {
+  oscsRender(run);
+  // Dot on the tab while a rebuild runs, so it's visible from the Lookups tab.
+  const tab = document.getElementById('tab-scheduled');
+  const dot = tab.querySelector('.tab-dot');
+  if (run.status === 'running' && !dot) tab.insertAdjacentHTML('beforeend', '<span class="tab-dot" title="A rebuild is running"></span>');
+  if (run.status !== 'running' && dot) dot.remove();
 });
-window.hcmAPI.onOscsProgress(oscsRender);
+
+// ── Tabs ───────────────────────────────────────────────────────────────────
+
+let activeTab = 'lookups';
+
+function showTab(name) {
+  activeTab = name;
+  document.querySelectorAll('.tabs .tab').forEach(t => {
+    const on = t.dataset.tab === name;
+    t.setAttribute('aria-selected', String(on));
+    t.tabIndex = on ? 0 : -1;
+    document.getElementById(t.getAttribute('aria-controls')).hidden = !on;
+  });
+  if (name === 'scheduled') oscsLoadConfig();
+  try { localStorage.setItem('activeTab', name); } catch { /* storage unavailable */ }
+}
+
+document.querySelectorAll('.tabs .tab').forEach(t => {
+  t.addEventListener('click', () => showTab(t.dataset.tab));
+  // Left/right arrow keys move between tabs.
+  t.addEventListener('keydown', e => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    const tabs = [...document.querySelectorAll('.tabs .tab')];
+    const next = tabs[(tabs.indexOf(t) + (e.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length];
+    showTab(next.dataset.tab);
+    next.focus();
+  });
+});
+
+try {
+  if (localStorage.getItem('activeTab') === 'scheduled') showTab('scheduled');
+} catch { /* storage unavailable */ }
