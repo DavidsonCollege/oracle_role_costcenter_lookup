@@ -1,8 +1,9 @@
-const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, safeStorage } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const fs   = require('fs');
 const { readSheet } = require('read-excel-file/node');
+const { createReindexer } = require('./oscs-reindex');
 
 // ── Window ────────────────────────────────────────────────────────────────────
 
@@ -17,6 +18,20 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
     },
+  });
+
+  // A search index rebuild can run for an hour. Closing the window doesn't stop
+  // it on Mac (the app stays open), but quitting does, so ask first.
+  win.on('close', e => {
+    if (!reindexer?.isRunning()) return;
+    const choice = dialog.showMessageBoxSync(win, {
+      type: 'warning',
+      buttons: ['Keep Open', 'Close Anyway'],
+      defaultId: 0,
+      message: 'A search index rebuild is running.',
+      detail: 'If the app quits, the job running in Oracle keeps going but no more steps are submitted, and nothing watches for errors.',
+    });
+    if (choice === 0) e.preventDefault();
   });
 
   win.loadFile('index.html');
@@ -99,6 +114,122 @@ ipcMain.handle('hcm:saveSettings', (_event, { baseUrl, username }) => {
   } catch {
     // Non-fatal — ignore write errors.
   }
+});
+
+// ── Search index (OSCS) rebuild ───────────────────────────────────────────────
+//
+// Logic lives in oscs-reindex.js; see OSCS_REINDEX_FEATURE.md. The runner lives
+// here in the main process so a run survives the window being reloaded.
+// The Slack webhook URL is encrypted with safeStorage (OS keychain), not stored
+// in settings.json.
+
+let reindexer = null;
+
+function slackWebhookPath() {
+  return path.join(app.getPath('userData'), 'oscs-slack-webhook.bin');
+}
+
+async function getSlackWebhook() {
+  try {
+    if (!fs.existsSync(slackWebhookPath()) || !(await safeStorage.isAsyncEncryptionAvailable())) return null;
+    return (await safeStorage.decryptStringAsync(fs.readFileSync(slackWebhookPath()))).result;
+  } catch {
+    return null;
+  }
+}
+
+function getReindexer() {
+  if (reindexer) return reindexer;
+  reindexer = createReindexer({
+    fetch: fetchWithTimeout,
+    dataDir: app.getPath('userData'),
+    defaultConfigPath: path.join(__dirname, 'oscs-reindex.config.json'),
+    getSlackWebhook,
+    onProgress: run => {
+      for (const w of BrowserWindow.getAllWindows()) w.webContents.send('oscs:progress', run);
+    },
+    onAlert: ({ level, text, slack }) => {
+      const win = BrowserWindow.getAllWindows()[0];
+      const opts = {
+        type: level === 'complete' ? 'info' : 'warning',
+        title: 'Search Index Rebuild',
+        message: level === 'complete' ? 'Search index rebuild finished.' : 'Search index rebuild stopped.',
+        detail: `${text.replace(/[*`]|:\w+:/g, '').slice(0, 1500)}\n\nSlack: ${slack}`,
+        buttons: ['OK'],
+      };
+      win ? dialog.showMessageBox(win, opts) : dialog.showMessageBox(opts);
+    },
+  });
+  return reindexer;
+}
+
+ipcMain.handle('oscs:config', async (_event, { baseUrl } = {}) => {
+  const r = getReindexer();
+  return { ...r.getConfigInfo(baseUrl), running: r.current(), slackConfigured: !!(await getSlackWebhook()) };
+});
+
+ipcMain.handle('oscs:openConfig', async () => {
+  try {
+    const p = getReindexer().ensureUserConfig();
+    const err = await shell.openPath(p);
+    return err ? { ok: false, error: err } : { ok: true, path: p };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
+ipcMain.handle('oscs:resetConfig', () => {
+  try {
+    return { ok: true, ...getReindexer().resetUserConfig() };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
+ipcMain.handle('oscs:openRunsFolder', async () => {
+  const dir = getReindexer().runsDir;
+  fs.mkdirSync(dir, { recursive: true });
+  const err = await shell.openPath(dir);
+  return err ? { ok: false, error: err } : { ok: true };
+});
+
+ipcMain.handle('oscs:listRuns', () => getReindexer().listRuns());
+
+ipcMain.handle('oscs:start', (_event, params) => getReindexer().start(params));
+
+ipcMain.handle('oscs:stop', () => getReindexer().stop());
+
+ipcMain.handle('oscs:inspect', async (_event, params) => {
+  try {
+    return await getReindexer().inspect(params);
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
+ipcMain.handle('oscs:setSlackWebhook', async (_event, { url }) => {
+  try {
+    const p = slackWebhookPath();
+    if (!url) {
+      fs.rmSync(p, { force: true });
+      return { ok: true, configured: false };
+    }
+    if (!/^https:\/\/hooks\.slack\.com\/services\/[\w/]+$/.test(url.trim())) {
+      return { ok: false, error: 'That isn\'t a Slack incoming webhook URL (https://hooks.slack.com/services/...).' };
+    }
+    if (!(await safeStorage.isAsyncEncryptionAvailable())) {
+      return { ok: false, error: 'Secure storage isn\'t available on this computer, so the webhook can\'t be saved.' };
+    }
+    fs.writeFileSync(p, await safeStorage.encryptStringAsync(url.trim()));
+    return { ok: true, configured: true };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
+ipcMain.handle('oscs:testSlack', async () => {
+  const result = await getReindexer().postSlack(':wave: Test message from the Oracle Access Request Lookup app (Search Index Rebuild alerts).');
+  return result === 'sent' ? { ok: true } : { ok: false, error: `Slack: ${result}` };
 });
 
 // ── IPC: hcm:ccHierarchy ─────────────────────────────────────────────────────

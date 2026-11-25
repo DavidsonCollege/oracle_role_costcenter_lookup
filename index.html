@@ -487,6 +487,97 @@
 
     .radio-label input[type="radio"] { cursor: pointer; }
 
+    /* ── Search Index Rebuild section ────────────────────────────────────── */
+    /* ── Tabs ─────────────────────────────────────────────────────────────── */
+    .tabs {
+      display: flex;
+      gap: 0.25rem;
+      border-bottom: 1.5px solid #e5e7eb;
+      margin: 1.75rem 0 1.5rem;
+    }
+    .tabs .tab {
+      background: none;
+      color: #6b7280;
+      border: none;
+      border-bottom: 2.5px solid transparent;
+      border-radius: 0;
+      margin-bottom: -1.5px;
+      padding: 0.55rem 1rem;
+      font-size: 0.88rem;
+      font-weight: 600;
+    }
+    .tabs .tab:hover:not(:disabled) { background: none; color: #374151; }
+    .tabs .tab[aria-selected="true"] { color: #c74634; border-bottom-color: #c74634; }
+    .tabs .tab:focus-visible { outline: 2px solid #c74634; outline-offset: 2px; }
+    .tab .tab-dot {
+      display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+      background: #2563eb; margin-left: 0.4rem; vertical-align: middle;
+    }
+    .oscs-note {
+      font-size: 0.8rem;
+      line-height: 1.5;
+      color: #92400e;
+      background: #fffbeb;
+      border: 1px solid #fcd34d;
+      border-radius: 6px;
+      padding: 0.6rem 0.8rem;
+      margin-bottom: 1rem;
+    }
+    .oscs-sub { font-size: 0.75rem; font-weight: 600; color: #6b7280; margin: 1.1rem 0 0.45rem; }
+    .oscs-row { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; margin-bottom: 0.6rem; }
+    .oscs-row select, .oscs-row input[type="text"], .oscs-row input[type="password"] { flex: 1; min-width: 12rem; width: auto; }
+    .btn-secondary {
+      font-size: 0.82rem;
+      padding: 0.4rem 0.8rem;
+      border: 1px solid #d1d5db;
+      background: #fff;
+      color: #374151;
+      font-weight: 500;
+    }
+    .btn-secondary:hover:not(:disabled) { background: #f9fafb; border-color: #9ca3af; }
+    .oscs-hint { font-size: 0.78rem; color: #6b7280; }
+    .oscs-msg { font-size: 0.8rem; white-space: pre-wrap; margin-bottom: 0.6rem; }
+    .oscs-msg.bad { color: #991b1b; }
+    .oscs-msg.good { color: #166534; }
+    .oscs-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; margin-top: 0.6rem; }
+    .oscs-table th { text-align: left; font-size: 0.7rem; color: #6b7280; font-weight: 600; padding: 0.3rem 0.45rem; border-bottom: 1.5px solid #e5e7eb; }
+    .oscs-table td { padding: 0.35rem 0.45rem; border-bottom: 1px solid #f3f4f6; vertical-align: top; word-break: break-word; }
+    .oscs-table .mono { font-family: "SF Mono", "Fira Code", monospace; font-size: 0.75rem; }
+    .oscs-table .nowrap { white-space: nowrap; word-break: normal; }
+    .st { display: inline-block; font-size: 0.68rem; font-weight: 700; border-radius: 4px; padding: 0.08rem 0.4rem; background: #f3f4f6; color: #374151; }
+    .st-SUCCEEDED { background: #dcfce7; color: #166534; }
+    .st-RUNNING, .st-SUBMITTING, .st-WAITING { background: #dbeafe; color: #1e40af; }
+    .st-WARNING, .st-UNKNOWN { background: #fef3c7; color: #92400e; }
+    .st-ERROR, .st-CANCELLED, .st-EXPIRED { background: #fee2e2; color: #991b1b; }
+    .oscs-issues { color: #92400e; margin-top: 0.2rem; }
+    .oscs-pre {
+      font-family: "SF Mono", "Fira Code", monospace;
+      font-size: 0.72rem;
+      white-space: pre-wrap;
+      word-break: break-word;
+      background: #f9fafb;
+      border: 1px solid #e5e7eb;
+      border-radius: 6px;
+      padding: 0.6rem;
+      max-height: 22rem;
+      overflow: auto;
+      margin-top: 0.4rem;
+    }
+    .oscs-diff {
+      font-size: 0.8rem;
+      line-height: 1.5;
+      color: #1e3a5f;
+      background: #eff6ff;
+      border: 1px solid #93c5fd;
+      border-radius: 6px;
+      padding: 0.6rem 0.8rem;
+      margin-bottom: 0.8rem;
+    }
+    .oscs-diff ul { margin: 0.4rem 0 0.6rem 1.2rem; }
+    .oscs-runhead { font-size: 0.82rem; margin-top: 0.8rem; }
+    .oscs-boxhead { display: flex; align-items: center; justify-content: space-between; }
+    .btn-copy { font-size: 0.72rem; padding: 0.2rem 0.6rem; }
+
 </style>
 </head>
 <body>
@@ -526,6 +617,12 @@
       </div>
     </div>
 
+    <div class="tabs" role="tablist" aria-label="Tools">
+      <button class="tab" role="tab" id="tab-lookups" aria-controls="panel-lookups" aria-selected="true" data-tab="lookups">Lookups</button>
+      <button class="tab" role="tab" id="tab-scheduled" aria-controls="panel-scheduled" aria-selected="false" data-tab="scheduled" tabindex="-1">Scheduled Processes</button>
+    </div>
+
+    <div class="tab-panel" role="tabpanel" id="panel-lookups" aria-labelledby="tab-lookups">
     <p class="section-label">Person Lookup</p>
     <div class="lookup-row">
       <input type="text" id="personNumber" placeholder="Person Number or Name" />
@@ -565,6 +662,66 @@
     </div>
 
     <div class="result" id="accessResult"></div>
+    </div>
+
+    <div class="tab-panel oscs" role="tabpanel" id="panel-scheduled" aria-labelledby="tab-scheduled" hidden>
+      <p class="section-label">Search Index Rebuild (after a refresh)</p>
+
+      <div class="oscs-note">
+        Use only after a Prod-to-Test refresh of a non-Prod instance. <strong>Don't run this after quarterly updates</strong>: Oracle reingests changed indexes itself during updates.
+        It never runs against Production. It submits the index ingest job for each index one at a time, waits for each to finish, then runs Compute Users ACL and the Learning ACL job. It stops at the first error or warning and alerts the team.
+        Uses the environment, username and password above; your account needs the privilege to submit these jobs.
+      </div>
+
+      <div id="oscsConfigMsg" class="oscs-msg"></div>
+      <div id="oscsConfigDiff" class="oscs-diff" hidden>
+        <p><strong>Your config differs from the one shipped with this version of the app.</strong> Your copy is what the app uses. If you didn't change it on purpose, replace it so you get the latest step list and job settings.</p>
+        <ul id="oscsConfigDiffList"></ul>
+        <button id="oscsResetConfigBtn" class="btn-secondary">Replace with shipped config</button>
+        <span class="oscs-hint">Your current copy is saved as a backup first.</span>
+      </div>
+
+      <div class="oscs-row">
+        <select id="oscsMode" aria-label="Run type">
+          <option value="full">Full run: every index, then the ACL jobs</option>
+          <option value="single">Test one step</option>
+          <option value="resume">Resume a stopped run</option>
+        </select>
+        <select id="oscsStep" aria-label="Step to test" style="display:none"></select>
+        <select id="oscsRun" aria-label="Run to resume" style="display:none"></select>
+        <select id="oscsFromStep" aria-label="Resume from step" style="display:none"></select>
+      </div>
+      <div class="oscs-row">
+        <input type="text" id="oscsConfirm" placeholder="Type the instance name to confirm" autocomplete="off" />
+        <span class="oscs-hint" id="oscsConfirmHint"></span>
+      </div>
+      <div class="oscs-row">
+        <button id="oscsStartBtn"><span class="spinner"></span><span class="btn-label">Start</span></button>
+        <button id="oscsStopBtn" class="btn-secondary" disabled>Stop after current step</button>
+        <button id="oscsOpenConfigBtn" class="btn-secondary">Edit config</button>
+        <button id="oscsReloadBtn" class="btn-secondary">Reload config</button>
+        <button id="oscsRunsBtn" class="btn-secondary">Run records</button>
+      </div>
+      <div id="oscsStartMsg" class="oscs-msg"></div>
+
+      <div id="oscsProgress"></div>
+
+      <p class="oscs-sub">Slack alerts (#team-admin-services-private)</p>
+      <div class="oscs-row">
+        <input type="password" id="oscsSlackUrl" placeholder="Slack incoming webhook URL" autocomplete="off" />
+        <button id="oscsSlackSaveBtn" class="btn-secondary">Save</button>
+        <button id="oscsSlackTestBtn" class="btn-secondary">Send test</button>
+        <button id="oscsSlackClearBtn" class="btn-secondary">Remove</button>
+      </div>
+      <div id="oscsSlackMsg" class="oscs-msg oscs-hint"></div>
+
+      <p class="oscs-sub">Inspect a request (read-only; works on any instance)</p>
+      <div class="oscs-row">
+        <input type="text" id="oscsInspectId" placeholder="Request ID, e.g. 11288959" />
+        <button id="oscsInspectBtn" class="btn-secondary">Inspect</button>
+      </div>
+      <div id="oscsInspectOut"></div>
+    </div>
 
     <p class="note">Credentials are never stored. All requests are made securely via the desktop app — no browser CORS restrictions.<br><span id="appVersion" style="opacity:0.6"></span><br><span id="feedbackLink" style="opacity:0.85; font-size:0.85em; cursor:pointer;">Suggestions or bug reports? <u>Email jedonovan@davidson.edu</u></span></p>
   </div>

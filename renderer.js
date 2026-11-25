@@ -489,3 +489,292 @@ function esc(str) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
 }
+
+// ── Search Index Rebuild (OSCS) ────────────────────────────────────────────
+// The run itself happens in the main process (oscs-reindex.js); this only
+// starts it, shows progress events, and offers the config and inspect tools.
+
+const oscs = { steps: [], runs: [], running: false };
+
+function oscsCreds() {
+  return {
+    baseUrl : document.getElementById('baseUrl').value.trim().replace(/\/$/, ''),
+    username: document.getElementById('username').value.trim(),
+    password: document.getElementById('password').value,
+  };
+}
+
+function oscsMsg(id, text, kind = '') {
+  const el = document.getElementById(id);
+  el.className = `oscs-msg ${kind}`;
+  el.textContent = text;
+}
+
+function stepOptions(steps) {
+  return steps.map((s, i) =>
+    `<option value="${esc(s.id)}">${i + 1}. ${esc(s.label)}${s.area ? ` (${esc(s.area)})` : ''}</option>`).join('');
+}
+
+async function oscsLoadConfig() {
+  const info = await window.hcmAPI.oscsConfig({ baseUrl: oscsCreds().baseUrl });
+  if (!info.ok) {
+    oscsMsg('oscsConfigMsg', info.error, 'bad');
+    return;
+  }
+  oscs.steps = info.steps;
+  document.getElementById('oscsStep').innerHTML = stepOptions(info.steps);
+  document.getElementById('oscsFromStep').innerHTML = stepOptions(info.steps);
+
+  const jobProblems = Object.values(info.jobErrors).flat();
+  const lines = [`${info.steps.length} steps from ${info.isUserCopy ? 'your config' : 'the default config'}: ${info.path}`];
+  if (info.errors.length) lines.push(...info.errors);
+  if (jobProblems.length) lines.push('Before a full run, finish these (a single-step test only needs its own job):', ...jobProblems.map(p => `• ${p}`));
+  oscsMsg('oscsConfigMsg', lines.join('\n'), info.errors.length || jobProblems.length ? 'bad' : 'oscs-hint');
+
+  const hint = document.getElementById('oscsConfirmHint');
+  hint.textContent = info.instance?.ok
+    ? `Type "${info.instance.name}" to confirm this instance.`
+    : (info.instance?.error ?? '');
+
+  oscsMsg('oscsSlackMsg', info.slackConfigured
+    ? 'A Slack webhook is saved (encrypted on this computer).'
+    : 'No Slack webhook saved. Alerts will only show in the app.', 'oscs-hint');
+
+  const diffBox = document.getElementById('oscsConfigDiff');
+  diffBox.hidden = !info.differences;
+  document.getElementById('oscsConfigDiffList').innerHTML = (info.differences ?? []).map(d => `<li>${esc(d)}</li>`).join('');
+
+  if (info.running) oscsRender(info.running);
+  await oscsLoadRuns();
+}
+
+async function oscsLoadRuns() {
+  oscs.runs = await window.hcmAPI.oscsListRuns();
+  const resumable = oscs.runs.filter(r => r.mode === 'full' && r.status !== 'running');
+  document.getElementById('oscsRun').innerHTML = resumable.length
+    ? resumable.map(r => `<option value="${esc(r.id)}">${esc(r.instance)}, ${esc(formatDateTime(r.startedAt))}: ${esc(r.status)}</option>`).join('')
+    : '<option value="">No full runs to resume</option>';
+  oscsSuggestResumeStep();
+}
+
+// Default the resume point to the first step that didn't succeed.
+function oscsSuggestResumeStep() {
+  // Uses the current config's steps, so an index removed from the config is skipped.
+  const run = oscs.runs.find(r => r.id === document.getElementById('oscsRun').value);
+  if (!run) return;
+  const done = new Set(run.steps.filter(s => s.status === 'SUCCEEDED').map(s => s.id));
+  const firstOpen = oscs.steps.find(s => !done.has(s.id));
+  if (firstOpen) document.getElementById('oscsFromStep').value = firstOpen.id;
+}
+
+function oscsModeChanged() {
+  const mode = document.getElementById('oscsMode').value;
+  document.getElementById('oscsStep').style.display     = mode === 'single' ? '' : 'none';
+  document.getElementById('oscsRun').style.display      = mode === 'resume' ? '' : 'none';
+  document.getElementById('oscsFromStep').style.display = mode === 'resume' ? '' : 'none';
+}
+
+async function oscsStart() {
+  const mode = document.getElementById('oscsMode').value;
+  const creds = oscsCreds();
+  const params = {
+    ...creds,
+    mode,
+    confirmName: document.getElementById('oscsConfirm').value,
+    stepId     : document.getElementById('oscsStep').value,
+    runId      : document.getElementById('oscsRun').value,
+    fromStepId : document.getElementById('oscsFromStep').value,
+  };
+
+  // Guardrail 5 exception: a single ACL job is allowed only as a deliberate test.
+  if (mode === 'single' && params.stepId.startsWith('acl:') &&
+      !confirm('Submit this ACL job on its own? Normally ACL jobs run only after every ingest step succeeds.')) return;
+
+  const btn = document.getElementById('oscsStartBtn');
+  btn.disabled = true;
+  btn.classList.add('loading');
+  oscsMsg('oscsStartMsg', '');
+  try {
+    window.hcmAPI.saveSettings({ baseUrl: creds.baseUrl, username: creds.username });
+    const result = await window.hcmAPI.oscsStart(params);
+    if (!result.ok) {
+      oscsMsg('oscsStartMsg', result.error, 'bad');
+      return;
+    }
+    document.getElementById('oscsConfirm').value = '';
+    oscsRender(result.run);
+  } finally {
+    btn.classList.remove('loading');
+    oscsSetRunning(oscs.running);
+  }
+}
+
+function oscsSetRunning(running) {
+  oscs.running = running;
+  document.getElementById('oscsStartBtn').disabled = running;
+  document.getElementById('oscsStopBtn').disabled  = !running;
+}
+
+function oscsRender(run) {
+  oscsSetRunning(run.status === 'running');
+  const done = run.steps.filter(s => s.status === 'SUCCEEDED').length;
+  const head = run.status === 'running'
+    ? `Running on <strong>${esc(run.instance)}</strong>: ${done} of ${run.steps.length} steps succeeded.`
+    : `Run on <strong>${esc(run.instance)}</strong> ${esc(run.status)}: ${done} of ${run.steps.length} steps succeeded.`;
+
+  const rows = run.steps.map((s, i) => {
+    const st = String(s.status ?? '').split(/\s/)[0];
+    const oracle = s.oracleStatus && s.oracleStatus !== s.status ? ` <span class="oscs-hint">(Oracle: ${esc(s.oracleStatus)})</span>` : '';
+    const issues = s.issues?.length ? `<div class="oscs-issues">${s.issues.map(esc).join('<br>')}</div>` : '';
+    const note = s.note ? `<div class="oscs-hint">${esc(s.note)}</div>` : '';
+    const log = s.logExcerpt && s.status !== 'SUCCEEDED'
+      ? `<details><summary class="oscs-hint">Log excerpt</summary><div class="oscs-pre">${esc(s.logExcerpt)}</div></details>` : '';
+    return `<tr>
+      <td>${i + 1}</td>
+      <td class="mono">${esc(s.label)}${s.verify ? ' <span class="oscs-hint">verify</span>' : ''}</td>
+      <td><span class="st st-${esc(st)}">${esc(s.status)}</span>${oracle}${issues}${note}${log}</td>
+      <td class="mono nowrap">${esc(s.requestId ?? '')}</td>
+      <td class="nowrap">${esc(formatTime(s.submittedAt))}</td>
+      <td class="nowrap">${esc(formatTime(s.endedAt))}</td>
+      <td>${s.rows != null ? esc(s.rows.toLocaleString()) : s.recreateOnly ? '<span class="oscs-hint" title="ACL index: recreated empty here, filled by its ACL job at the end">recreate only</span>' : ''}</td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('oscsProgress').innerHTML = `
+    <p class="oscs-runhead">${head}</p>
+    ${run.stopReason ? `<p class="oscs-msg bad">${esc(run.stopReason)}</p>` : ''}
+    ${run.saveError ? `<p class="oscs-msg bad">${esc(run.saveError)}</p>` : ''}
+    <table class="oscs-table">
+      <thead><tr><th>#</th><th>Step</th><th>Status</th><th>Request</th><th>Started</th><th>Ended</th><th>Rows</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+
+  if (run.status !== 'running') oscsLoadRuns();
+}
+
+function formatTime(isoStr) {
+  if (!isoStr) return '';
+  return new Date(isoStr).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit' });
+}
+
+function formatDateTime(isoStr) {
+  if (!isoStr) return '';
+  return new Date(isoStr).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
+async function oscsInspect() {
+  const out = document.getElementById('oscsInspectOut');
+  const requestId = document.getElementById('oscsInspectId').value.trim();
+  out.innerHTML = '<p class="oscs-hint">Loading…</p>';
+  const r = await window.hcmAPI.oscsInspect({ ...oscsCreds(), requestId });
+  if (!r.ok) {
+    out.innerHTML = `<p class="oscs-msg bad">${esc(r.error)}</p>`;
+    return;
+  }
+  const params = r.essRequest?.requestParameters;
+  const boxes = [
+    ...(Array.isArray(params) ? [['Request parameters', params.map(p => `${p.name} = ${p.value}${p.paramType ? `  (${p.paramType})` : ''}`).join('\n')]] : []),
+    ['ESS scheduler request', JSON.stringify(r.essRequest, null, 2)],
+    ['ERP Integrations status', JSON.stringify(r.erpStatus, null, 2)],
+    ['Log', r.log ?? r.logError ?? ''],
+  ];
+  out.innerHTML = boxes.map(([title, text], i) => `
+    <p class="oscs-sub oscs-boxhead">${esc(title)}
+      <button class="btn-secondary btn-copy" data-copy="${i}">Copy</button></p>
+    <div class="oscs-pre" data-box="${i}">${esc(text)}</div>`).join('');
+}
+
+// One-click copy for the Inspect boxes (delegated, since the boxes are re-rendered).
+document.getElementById('oscsInspectOut').addEventListener('click', async e => {
+  const btn = e.target.closest('.btn-copy');
+  if (!btn) return;
+  const box = document.querySelector(`#oscsInspectOut [data-box="${btn.dataset.copy}"]`);
+  try {
+    await navigator.clipboard.writeText(box.textContent);
+    btn.textContent = 'Copied';
+  } catch {
+    btn.textContent = 'Copy failed';
+  }
+  setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
+});
+
+async function oscsSaveSlack(url) {
+  const r = await window.hcmAPI.oscsSetSlack({ url });
+  if (!r.ok) return oscsMsg('oscsSlackMsg', r.error, 'bad');
+  document.getElementById('oscsSlackUrl').value = '';
+  oscsMsg('oscsSlackMsg', r.configured ? 'Slack webhook saved (encrypted on this computer).' : 'Slack webhook removed.', 'good');
+}
+
+document.getElementById('oscsMode').addEventListener('change', oscsModeChanged);
+document.getElementById('oscsRun').addEventListener('change', oscsSuggestResumeStep);
+document.getElementById('oscsStartBtn').addEventListener('click', oscsStart);
+document.getElementById('oscsStopBtn').addEventListener('click', async () => {
+  const r = await window.hcmAPI.oscsStop();
+  oscsMsg('oscsStartMsg', r.ok ? 'Will stop after the current step finishes in Oracle.' : r.error, r.ok ? 'oscs-hint' : 'bad');
+});
+document.getElementById('oscsOpenConfigBtn').addEventListener('click', async () => {
+  const r = await window.hcmAPI.oscsOpenConfig();
+  if (!r.ok) oscsMsg('oscsConfigMsg', r.error, 'bad');
+  else oscsLoadConfig();
+});
+document.getElementById('oscsReloadBtn').addEventListener('click', oscsLoadConfig);
+document.getElementById('oscsResetConfigBtn').addEventListener('click', async () => {
+  if (!confirm('Replace your config with the shipped one? Your current copy will be saved as a backup.')) return;
+  const r = await window.hcmAPI.oscsResetConfig();
+  await oscsLoadConfig();
+  if (!r.ok) oscsMsg('oscsConfigMsg', r.error, 'bad');
+  else if (r.backup) oscsMsg('oscsConfigMsg', `Config replaced. Your old copy was saved as ${r.backup}`, 'good');
+});
+document.getElementById('oscsRunsBtn').addEventListener('click', () => window.hcmAPI.oscsOpenRunsFolder());
+document.getElementById('oscsInspectBtn').addEventListener('click', oscsInspect);
+document.getElementById('oscsInspectId').addEventListener('keydown', e => { if (e.key === 'Enter') oscsInspect(); });
+document.getElementById('oscsSlackSaveBtn').addEventListener('click', () => oscsSaveSlack(document.getElementById('oscsSlackUrl').value.trim()));
+document.getElementById('oscsSlackClearBtn').addEventListener('click', () => oscsSaveSlack(''));
+document.getElementById('oscsSlackTestBtn').addEventListener('click', async () => {
+  const r = await window.hcmAPI.oscsTestSlack();
+  oscsMsg('oscsSlackMsg', r.ok ? 'Test message sent.' : r.error, r.ok ? 'good' : 'bad');
+});
+// The confirmation hint depends on the selected environment.
+document.getElementById('baseUrl').addEventListener('change', () => {
+  if (activeTab === 'scheduled') oscsLoadConfig();
+});
+window.hcmAPI.onOscsProgress(run => {
+  oscsRender(run);
+  // Dot on the tab while a rebuild runs, so it's visible from the Lookups tab.
+  const tab = document.getElementById('tab-scheduled');
+  const dot = tab.querySelector('.tab-dot');
+  if (run.status === 'running' && !dot) tab.insertAdjacentHTML('beforeend', '<span class="tab-dot" title="A rebuild is running"></span>');
+  if (run.status !== 'running' && dot) dot.remove();
+});
+
+// ── Tabs ───────────────────────────────────────────────────────────────────
+
+let activeTab = 'lookups';
+
+function showTab(name) {
+  activeTab = name;
+  document.querySelectorAll('.tabs .tab').forEach(t => {
+    const on = t.dataset.tab === name;
+    t.setAttribute('aria-selected', String(on));
+    t.tabIndex = on ? 0 : -1;
+    document.getElementById(t.getAttribute('aria-controls')).hidden = !on;
+  });
+  if (name === 'scheduled') oscsLoadConfig();
+  try { localStorage.setItem('activeTab', name); } catch { /* storage unavailable */ }
+}
+
+document.querySelectorAll('.tabs .tab').forEach(t => {
+  t.addEventListener('click', () => showTab(t.dataset.tab));
+  // Left/right arrow keys move between tabs.
+  t.addEventListener('keydown', e => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    const tabs = [...document.querySelectorAll('.tabs .tab')];
+    const next = tabs[(tabs.indexOf(t) + (e.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length];
+    showTab(next.dataset.tab);
+    next.focus();
+  });
+});
+
+try {
+  if (localStorage.getItem('activeTab') === 'scheduled') showTab('scheduled');
+} catch { /* storage unavailable */ }

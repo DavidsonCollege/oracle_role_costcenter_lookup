@@ -1,6 +1,6 @@
 {
   "name": "oracle-access-request-lookup",
-  "version": "1.4.7",
+  "version": "1.5.0",
   "description": "Oracle Access Request Lookup desktop app",
   "main": "main.js",
   "scripts": {
@@ -27,6 +27,8 @@
       "preload.js",
       "renderer.js",
       "index.html",
+      "oscs-reindex.js",
+      "oscs-reindex.config.json",
       "build-date.json",
       "assets/**",
       "node_modules/read-excel-file/**",
