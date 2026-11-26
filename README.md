@@ -11,7 +11,7 @@ Electron desktop app for looking up Oracle HCM worker assignments, assigned secu
 3. Run the installer — Windows will show a "Windows protected your PC" SmartScreen warning because the app isn't code-signed; click **More info** → **Run anyway**
 4. Follow the installer prompts; choose an install directory if prompted
 5. Launch **Oracle Access Request Lookup** from the Start menu
-6. Enter your HCM Base URL, username, and password — the URL and username will be remembered next time; the password must be re-entered each session
+6. Choose the HCM Environment and enter your username and password — the environment and username are remembered next time; the password must be re-entered each session
 7. The app requires a connection to the Davidson network (VPN or on-campus) to retrieve security roles. If you reconnect to VPN mid-session and lookups still fail, click the **Reconnect** button in the top-right corner to restart the app
 8. When a new version is available, the app will prompt you to install it automatically
 
@@ -23,7 +23,7 @@ Electron desktop app for looking up Oracle HCM worker assignments, assigned secu
 2. Under the latest release, download the file ending in `.dmg`
 3. Open the `.dmg` file and drag **Oracle Access Request Lookup** into your Applications folder
 4. Launch **Oracle Access Request Lookup** from your Applications folder
-5. Enter your HCM Base URL, username, and password — the URL and username will be remembered next time; the password must be re-entered each session
+5. Choose the HCM Environment and enter your username and password — the environment and username are remembered next time; the password must be re-entered each session
 6. The app requires a connection to the Davidson network (VPN or on-campus) to retrieve security roles. If you reconnect to VPN mid-session and lookups still fail, click the **Reconnect** button in the top-right corner to restart the app
 7. When a new version is available, the app will download it automatically and show a dialog at startup — click **Restart Now** to apply the update
 
@@ -53,14 +53,14 @@ It submits Oracle's index ingest job for each search index one at a time and wai
 **Running it**
 1. Pick the environment at the top and open the **Run Index Jobs** tab.
 2. Choose a run type:
-   - **Full run**: every index, then the ACL jobs. A full run takes about 30 minutes.
-   - **Test one step**: runs a single index or ACL job.
+   - **Full run**: every index, then the ACL and Recruiting jobs. A full run takes 30 to 60 minutes.
+   - **Test one step**: runs a single index, ACL or Recruiting job.
    - **Resume a stopped run**: picks up a run that stopped, skipping the steps that already succeeded.
 3. Type the instance name to confirm and click **Start**. The table shows each step's status, Oracle request number, rows ingested and times.
 4. **Stop after current step** lets the running Oracle job finish and then stops submitting more. It never cancels a job in Oracle. If you close the window during a run, the app asks first.
 
 **When it stops**
-- The app shows the reason, posts it to Slack and leaves the remaining steps pending.
+- The app shows the reason, posts it to Slack (unless Slack is off for the run) and leaves the remaining steps pending.
 - Look at the request in Oracle's **Scheduled Processes**, fix the cause, then use **Resume a stopped run**.
 - If Oracle starts retrying a failed request on its own, the app stops right away rather than waiting. Cancel that request in Scheduled Processes if it shouldn't run again.
 
@@ -107,7 +107,7 @@ Without a webhook, alerts only show in the app. Until one is saved on your compu
 
 ## Setting Up for a New Oracle Instance
 
-`PROJECT_NOTES.txt` in the repository root contains a full technical reference — API details, SOAP gotchas, report column names, IPC patterns, and deployment notes useful for anyone developing or adapting this app.
+`CLAUDE.md` in the repository root is the full technical reference — API details, SOAP gotchas, report column names, IPC patterns, the Search Index Rebuild internals and deployment notes. `PROJECT_NOTES.txt` is a shorter plain-text version of the same notes.
 
 ### Prerequisites
 
@@ -172,15 +172,16 @@ Open `oscs-reindex.config.json` and set:
 - `indexCheck`: the job name, submitter and number of days Check index list searches.
 - `steps`: the indexes to rebuild. Oracle's list varies by instance, so test each one with **Test one step** and remove any that load 0 rows when they shouldn't.
 
-`OSCS_REINDEX_FEATURE.md` has the full spec. For Slack alerts, create your own Slack app with an incoming webhook for your channel, and change the channel name shown on the Indexing Tools tab in `index.html`.
+`CLAUDE.md` explains how the rebuild works and why. For Slack alerts, create your own Slack app with an incoming webhook for your channel, and change the channel name shown on the Indexing Tools tab in `index.html`.
 
 ### 6. Test Locally
 
 ```bash
+npm test
 npm start
 ```
 
-Enter one of your environment URLs, your Oracle username, and password. Try looking up a known worker by person number to confirm the connection works before testing name search and reports.
+`npm test` runs the smoke tests (syntax, packaged files, report parsing and the rebuild logic); the same tests run on every pull request. Then, in the app, choose one of your environments, your Oracle username, and password. Try looking up a known worker by person number to confirm the connection works before testing name search and reports.
 
 ### 7. Set Up Your Release Pipeline
 
@@ -215,7 +216,7 @@ Builds are created entirely by **GitHub Actions** — you never run the build co
 
 ### If you are working with Claude Code
 
-Tell Claude: **"commit, push, and build"** (or just **"build"** if changes are already committed). Claude will handle everything — bumping the version, committing, pushing main, creating and pushing the tag — which triggers the GitHub Actions release pipeline.
+Tell Claude: **"commit, push, and build"** (or just **"build"** if changes are already committed). Claude handles the rest: bumping the version if needed, committing, opening and merging a pull request (where the smoke tests run), then pushing the tag from `main`, which triggers the GitHub Actions release pipeline.
 
 ### If you are doing it yourself
 

@@ -1,6 +1,6 @@
 {
   "_readme": [
-    "Config for the Search Index Rebuild feature (see OSCS_REINDEX_FEATURE.md).",
+    "Config for the Search Index Rebuild feature (see the Search Index Rebuild sections of CLAUDE.md).",
     "Edit steps to add, remove or reorder indexes. Never leave an index name blank: a blank name rebuilds every index, and the app refuses to submit it.",
     "Steps with \"verify\": true warn (and stop) if they ingest 0 rows. If one fails or loads 0 rows during testing, remove it.",
     "\"exclusions\" lists indexes in Production that we deliberately don't rebuild, with the reason. Check index list shows them as Excluded on purpose instead of New in Oracle. Use \"index\" for one name or \"prefix\" for a group.",

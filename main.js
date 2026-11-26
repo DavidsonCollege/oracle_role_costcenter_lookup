@@ -118,7 +118,7 @@ ipcMain.handle('hcm:saveSettings', (_event, { baseUrl, username }) => {
 
 // ── Search index (OSCS) rebuild ───────────────────────────────────────────────
 //
-// Logic lives in oscs-reindex.js; see OSCS_REINDEX_FEATURE.md. The runner lives
+// Logic lives in oscs-reindex.js; see CLAUDE.md ("Search Index Rebuild"). The runner lives
 // here in the main process so a run survives the window being reloaded.
 // The Slack webhook URL is encrypted with safeStorage (OS keychain), not stored
 // in settings.json.
