@@ -1,13 +1,16 @@
 PROJECT NOTES — Oracle Access Request Lookup
 =============================================
 Reference notes for future development on this or similar projects.
+CLAUDE.md is the fuller, more current reference; keep the two in step.
 
 
 APPLICATION OVERVIEW
 --------------------
 Electron desktop app (Mac + Windows) that queries Oracle HCM Cloud via
 REST API and SOAP to look up worker positions, assigned security roles,
-auto-provisioning rules, and cost center manager information.
+auto-provisioning rules, and cost center manager information. It also
+rebuilds Oracle Search (OSCS) indexes on a non-Prod instance after a
+Prod-to-Test refresh (see SEARCH INDEX REBUILD below).
 
 Files:
   main.js       — Electron main process; all API calls live here
@@ -15,11 +18,16 @@ Files:
   index.html    — Single-page UI markup and styles (no inline scripts)
   renderer.js   — All UI logic (loaded via <script src="renderer.js">)
   package.json  — Build config for electron-builder
+  oscs-reindex.js          — Search index rebuild runner (no Electron imports)
+  oscs-reindex.config.json — Rebuild step list, exclusions and job definitions
+  UPDATING_THE_INDEX_LIST.md — Making an index-list change permanent
+  *.catalog     — BI Publisher exports of the three reports
   assets/       — App icons (icon.icns for Mac, icon.ico for Windows)
-  build-date.json        — Written at build time by prebuild:mac/prebuild:win scripts
+  build-date.json        — Written at build time by prebuild:mac/prebuild:win scripts (git-ignored)
   entitlements.mac.plist — Required for Mac hardened runtime
+  test/smoke.js          — npm test; runs on every PR via .github/workflows/pr-check.yml
   .github/workflows/build.yml — GitHub Actions release pipeline
-  control-budget-app/    — Standalone stripped-down app for Control Budget report only
+  .github/dependabot.yml — Weekly dependency update PRs
 
 
 ORACLE HCM REST API
@@ -140,8 +148,12 @@ Report path gotcha: the .xdo extension is required in reportAbsolutePath.
 Response parsing:
   - Report data is returned as base64 in the <reportBytes> element
   - Decode: Buffer.from(b64, 'base64')
-  - Parse xlsx in-memory with SheetJS: XLSX.read(buffer, { type: 'buffer' })
-  - Convert to 2D array: XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' })
+  - Parse xlsx in-memory with read-excel-file:
+      const rows = await readSheet(buffer)   // require('read-excel-file/node')
+    Reads the first sheet as a 2D array. Empty cells come back as null, so
+    normalise with rows.map(row => row.map(cell => cell ?? '')).
+  - SheetJS (xlsx) was replaced in v1.4.5: it stopped publishing to npm after
+    0.18.5, which has unpatched advisories.
 
 Report row structure (varies):
   - Some reports: row 0 = title, row 1 = column headers, row 2+ = data
@@ -209,8 +221,29 @@ Return shape convention:
   Failure: { ok: false, error: 'message' }
   This lets the UI check result.ok before accessing data fields.
 
-Secondary/optional data (roles, auto-prov rules) uses a nested try/catch so
-failures are surfaced as error strings rather than crashing the whole lookup.
+Secondary/optional data (roles) uses a nested try/catch so failures are
+surfaced as error strings rather than crashing the whole lookup.
+Auto-provisioning rules are loaded on demand via the hcm:autoProvRules channel.
+
+
+SEARCH INDEX REBUILD (OSCS reindex)
+-----------------------------------
+UI: the "Run Index Jobs" tab runs it; the "Indexing Tools" tab has Check index
+list, Inspect a request, Find latest, the rebuild config and Slack setup.
+
+- Submits FndOSCSIndexIngestJob once per index, one at a time (ERP
+  Integrations REST), then Compute Users ACL, the Learning ACL job and three
+  Recruiting Load and Index jobs (ESS scheduler REST).
+- Guardrails are enforced in main.js/oscs-reindex.js, not just the UI: never
+  Production, typed instance name, no blank index names, ACL and Recruiting
+  jobs only after every ingest step succeeded.
+- Recruiting jobs use Drop and Recreate Index (FULL). Upgrade Current Index
+  reports Succeeded but does nothing after a refresh, so the app also checks
+  the FA_EMCC_counter_1_* request parameters.
+- Run records: userData/oscs-runs/<runId>.json. Slack webhook: encrypted with
+  safeStorage in userData, never in settings.json or the repository.
+- Details: CLAUDE.md ("Oracle ESS job REST APIs" and "Search Index Rebuild:
+  background", which has the reasons, log checks and Oracle sources).
 
 
 SETTINGS PERSISTENCE
@@ -252,12 +285,15 @@ Build commands (local only — do not use with --publish in production):
 Cross-platform builds: handled automatically by GitHub Actions (see DEPLOYMENT
 section below). No Wine or Windows machine required.
 
-Files array must explicitly include all runtime dependencies:
+Files array must list every app file loaded at runtime:
   "files": ["main.js", "preload.js", "renderer.js", "index.html",
+            "oscs-reindex.js", "oscs-reindex.config.json",
             "build-date.json", "assets/**",
-            "node_modules/xlsx/**", "node_modules/electron-updater/**"]
-  electron-builder does NOT auto-include node_modules unless specified here.
-  Forgetting renderer.js breaks the UI in packaged builds.
+            "node_modules/read-excel-file/**", "node_modules/electron-updater/**"]
+  Forgetting renderer.js breaks the UI in packaged builds. electron-builder
+  also packages the full "dependencies" tree (confirmed by inspecting app.asar);
+  the node_modules entries are kept for explicitness. npm test checks that
+  every listed file exists.
 
 
 DEPLOYMENT & AUTO-UPDATES
@@ -275,7 +311,8 @@ Both platforms are published as assets on the GitHub Release using GH_TOKEN.
 
 To release a new version:
   1. Bump "version" in package.json (semver: patch for fixes, minor for features)
-  2. Commit and push main FIRST:
+     Usually on a branch, merged through a pull request so npm test runs.
+  2. Commit and push main FIRST (or merge the PR):
        git add package.json && git commit -m "v1.x.x"
        git push origin main
   3. Then create and push the tag:
@@ -295,12 +332,10 @@ Auto-update behaviour (electron-updater, runtime dependency):
   Both platforms: autoDownload=true. The updater downloads silently in the
   background, then fires the 'update-downloaded' event.
 
-  Windows: full auto-update via checkForUpdatesAndNotify() — user is prompted
-           to restart when the download is complete.
-
-  Mac:     autoDownload=true + update-downloaded event → Electron dialog.showMessageBox
-           with "Restart Now" / "Later" buttons → autoUpdater.quitAndInstall()
-           on confirm. Full auto-update works because builds are code-signed.
+  Mac and Windows use the same code: update-downloaded event →
+  Electron dialog.showMessageBox with "Restart Now" / "Later" buttons →
+  autoUpdater.quitAndInstall() on confirm. An error listener shows update
+  errors in a dialog. Mac auto-update works because builds are code-signed.
 
   Mac auto-update requirements — ALL of these must be true:
     1. Code-signed and notarized build (Developer ID Application certificate)
@@ -317,7 +352,8 @@ Auto-update behaviour (electron-updater, runtime dependency):
 
 Code signing — Mac (configured):
   Signed and notarized via GitHub Actions using a Developer ID Application cert.
-  Certificate and credentials are stored as GitHub Secrets:
+  Certificate and credentials are GitHub environment secrets on the "release"
+  environment, which only v* tags can use (gh secret set NAME --env release):
     APPLE_CERT               — base64-encoded .p12 (run: base64 -i cert.p12 | pbcopy)
     APPLE_CERT_PASSWORD      — export password (type manually — do NOT paste;
                                pasting can introduce hidden characters)
@@ -367,9 +403,9 @@ UI PATTERNS
 
 DEPENDENCIES
 ------------
-  xlsx (SheetJS) ^0.18.5      — in-memory Excel parsing, no temp files needed
-  electron-updater ^6.8.3     — auto-update support (runtime dependency)
-  electron ^40.6.0            — desktop framework (devDependency)
-  electron-builder ^26.8.1    — packaging (devDependency)
+  read-excel-file ^9.3.20     — in-memory Excel parsing, no temp files needed
+  electron-updater ^6.8.11    — auto-update support (runtime dependency)
+  electron ^45.4.1            — desktop framework (devDependency)
+  electron-builder ^26.18.0   — packaging (devDependency)
 
 fs and path are Node built-ins.

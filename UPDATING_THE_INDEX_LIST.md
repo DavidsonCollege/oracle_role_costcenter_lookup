@@ -58,11 +58,10 @@ If the index was a step, remove it from `steps`.
 - If Oracle removed or renamed it, that's all.
 - If it's being dropped because it isn't used or loads nothing, add it to `exclusions` with the reason as well. Otherwise **Check index list** flags it as **New in Oracle** every quarter.
 
-## 3. Update the tests and the spec
+## 3. Update the test
 
 1. In `test/smoke.js`, the test `shipped OSCS config is valid, with N unique non-blank indexes` checks the number of index steps. Change both numbers (the test name and `cfg.steps.length`) to the new count.
-2. In `OSCS_REINDEX_FEATURE.md`, section 9 ("Ordered step list") has a table of the indexes. Add, remove or move the row, and renumber.
-3. Run the tests:
+2. Run the tests:
 
    ```bash
    npm test

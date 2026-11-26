@@ -1,6 +1,6 @@
 'use strict';
 // Oracle Search (OSCS) index rebuild after a Prod-to-Test refresh.
-// Spec: OSCS_REINDEX_FEATURE.md. Runs each index ingest job one at a time, then
+// Background: CLAUDE.md, "Search Index Rebuild: background". Runs each index ingest job one at a time, then
 // the two ACL jobs, and stops on the first error or warning.
 //
 // No Electron imports here, so test/smoke.js can load the helpers in plain Node.
@@ -226,7 +226,7 @@ function buildChangeRequest({ changes, tests = {}, version = '', fileName = '' }
   L.push(`ATTACHED: ${fileName || 'my oscs-reindex.config.json'}, my config with these changes. Use it to check the changes; copy only the changes listed above into the shipped config.`, '');
   L.push('HOW TO UPDATE THE APP');
   L.push('1. On a branch, apply the changes above to oscs-reindex.config.json in the repository.');
-  L.push('2. Update the index count in test/smoke.js and the table in OSCS_REINDEX_FEATURE.md section 9, then run npm test.');
+  L.push('2. Update the index count in test/smoke.js, then run npm test.');
   L.push('3. Run npm start, click Replace with shipped config, then Check index list on Production: the changed indexes should no longer show as New in Oracle or Missing from Oracle.');
   L.push('4. Bump the patch version in package.json, open a pull request, merge it, and push the version tag. GitHub Actions builds and publishes the release.');
   L.push('5. Tell me when it is released. I will click Replace with shipped config in the app.');
@@ -396,7 +396,7 @@ function unzipEntries(buf, depth = 0) {
   return out;
 }
 
-// ── Log checks (section 7a): a job can say Succeeded and still be wrong ───────
+// ── Log checks: a job can say Succeeded and still be wrong ───────
 
 function sumMatches(text, pattern) {
   const re = new RegExp(pattern, 'gi');
