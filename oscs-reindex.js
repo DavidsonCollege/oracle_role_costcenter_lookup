@@ -95,6 +95,149 @@ function summarizeConfigDiff(user, shipped) {
   return diffs.length ? diffs : null;
 }
 
+// Small, checked edits to the personal copy, so nobody edits JSON by hand:
+// add an index step (after a given step), skip an index with a reason, or
+// remove a step. Writes only if the result still validates.
+function editUserConfig(dataDir, defaultPath, { action, index, after = null, area = '', notes = '', reason = '' } = {}) {
+  const name = String(index ?? '').trim();
+  if (!INDEX_NAME_RE.test(name)) throw new Error(`"${name}" is not a valid index name.`);
+  const userPath = ensureUserConfig(dataDir, defaultPath);
+  const config = JSON.parse(fs.readFileSync(userPath, 'utf8'));
+  config.steps = Array.isArray(config.steps) ? config.steps : [];
+  config.exclusions = Array.isArray(config.exclusions) ? config.exclusions : [];
+  const stepAt = config.steps.findIndex(s => s?.index === name);
+  const exclAt = config.exclusions.findIndex(x => x?.index === name);
+  let message;
+  if (action === 'addStep') {
+    if (stepAt >= 0) throw new Error(`${name} is already in the rebuild.`);
+    if (exclAt >= 0) config.exclusions.splice(exclAt, 1);
+    const step = { index: name };
+    if (String(area).trim()) step.area = String(area).trim();
+    if (String(notes).trim()) step.notes = String(notes).trim();
+    const pos = after ? config.steps.findIndex(s => s?.index === after) : -1;
+    if (after && pos < 0) throw new Error(`Can't find ${after} in the rebuild's steps.`);
+    config.steps.splice(after ? pos + 1 : config.steps.length, 0, step);
+    message = `Added ${name} to the rebuild${after ? ` after ${after}` : ''}.`;
+  } else if (action === 'addExclusion') {
+    if (!String(reason).trim()) throw new Error('Give a reason for skipping it.');
+    if (exclAt >= 0) throw new Error(`${name} is already skipped.`);
+    if (stepAt >= 0) config.steps.splice(stepAt, 1);
+    config.exclusions.push({ index: name, reason: String(reason).trim() });
+    message = `${name} will be skipped: ${String(reason).trim()}.`;
+  } else if (action === 'removeStep') {
+    if (stepAt < 0) throw new Error(`${name} isn't in the rebuild.`);
+    config.steps.splice(stepAt, 1);
+    message = `Removed ${name} from the rebuild.`;
+  } else {
+    throw new Error('Unknown config change.');
+  }
+  const v = validateConfig(config);
+  if (v.errors.length) throw new Error(`Not saved: ${v.errors.join(' ')}`);
+  const tmp = `${userPath}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(config, null, 2) + '\n', 'utf8');
+  fs.renameSync(tmp, userPath);
+  return { message, path: userPath };
+}
+
+// ── Asking T&I to ship a config change ─────────────────────────────────────
+
+const CHANGE_REQUEST_TO = 'ti@davidson.edu';
+const UPDATE_DOC_URL = 'https://github.com/DavidsonCollege/oracle_role_costcenter_lookup/blob/main/UPDATING_THE_INDEX_LIST.md';
+
+// Index-level differences between a personal copy and the shipped config.
+function describeConfigChanges(user, shipped) {
+  const uSteps = Array.isArray(user.steps) ? user.steps : [];
+  const dSteps = Array.isArray(shipped.steps) ? shipped.steps : [];
+  const uEx = Array.isArray(user.exclusions) ? user.exclusions : [];
+  const dEx = Array.isArray(shipped.exclusions) ? shipped.exclusions : [];
+  const dNames = dSteps.map(s => s?.index), uNames = uSteps.map(s => s?.index);
+  const exKey = x => x?.index ?? `prefix:${x?.prefix}`;
+  const added = uSteps.map((s, i) => ({ step: s, after: uSteps[i - 1]?.index ?? null }))
+    .filter(x => !dNames.includes(x.step?.index));
+  const removed = dSteps.filter(s => !uNames.includes(s?.index));
+  const skipped = uEx.filter(x => !dEx.some(d => exKey(d) === exKey(x) && d.reason === x.reason));
+  const unskipped = dEx.filter(d => !uEx.some(x => exKey(x) === exKey(d)));
+  const changedSteps = uSteps.filter(s => {
+    const d = dSteps.find(x => x?.index === s?.index);
+    return d && JSON.stringify(d) !== JSON.stringify(s);
+  });
+  const common = uNames.filter(n => dNames.includes(n));
+  const reordered = common.join() !== dNames.filter(n => uNames.includes(n)).join();
+  // Anything beyond the index lists (job settings, hosts, polling) is listed but not itemized.
+  const other = (summarizeConfigDiff(user, shipped) ?? [])
+    .filter(d => /^Job settings differ|^Other settings differ/.test(d));
+  const any = added.length || removed.length || skipped.length || unskipped.length || changedSteps.length || reordered || other.length;
+  return { added, removed, skipped, unskipped, changedSteps, reordered, other, any: !!any };
+}
+
+// The email to T&I: what changed and why, tests run, and how to ship it.
+function buildChangeRequest({ changes, tests = {}, version = '', fileName = '' }) {
+  const testLine = index => {
+    const t = tests[index];
+    if (!t) return '    Not tested with the app yet.';
+    return `    Tested: request ${t.requestId} on ${t.instance}, ${t.status}${t.rows != null ? `, ${t.rows.toLocaleString('en-US')} rows` : t.recreateOnly ? ', recreate only' : ''} (${String(t.endedAt ?? '').slice(0, 10)}).`;
+  };
+  const L = [];
+  L.push('Please assign this ticket to Admin Services.', '');
+  L.push(`Requested change to the Search Index Rebuild's index list in the Oracle Access Request Lookup app${version ? ` (version ${version})` : ''}, so it applies to everyone's future runs.`, '');
+  if (changes.added.length) {
+    L.push('ADD to the rebuild:');
+    for (const a of changes.added) {
+      L.push(`- ${a.step.index}${a.after ? `, after ${a.after}` : ', at the start'}${a.step.area ? ` (${a.step.area})` : ''}`);
+      L.push(`    Reason: ${a.step.notes || '(none given)'}`, testLine(a.step.index));
+    }
+    L.push('');
+  }
+  if (changes.skipped.length) {
+    L.push("SKIP (add to the exclusions, don't rebuild):");
+    for (const x of changes.skipped) {
+      L.push(`- ${x.index ?? `indexes starting ${x.prefix}`}`, `    Reason: ${x.reason || '(none given)'}`);
+      if (x.index) L.push(testLine(x.index));
+    }
+    L.push('');
+  }
+  if (changes.removed.length) {
+    L.push('REMOVE from the rebuild:');
+    for (const s of changes.removed) {
+      const nowSkipped = changes.skipped.some(x => x.index === s.index);
+      L.push(`- ${s.index}${nowSkipped ? ' (also skipped, above)' : ''}`);
+    }
+    L.push('');
+  }
+  if (changes.unskipped.length) {
+    L.push('No longer skipped (remove from the exclusions):');
+    for (const x of changes.unskipped) L.push(`- ${x.index ?? `indexes starting ${x.prefix}`}`);
+    L.push('');
+  }
+  if (changes.changedSteps.length) {
+    L.push('Changed settings (area, notes or "verify"):');
+    for (const s of changes.changedSteps) L.push(`- ${s.index}: ${JSON.stringify(s)}`);
+    L.push('');
+  }
+  if (changes.reordered) L.push('The order of the steps also differs. Compare with the attached file.', '');
+  if (changes.other.length) L.push(...changes.other.map(o => `${o} Compare with the attached file; these may not be intended.`), '');
+
+  const entries = [
+    ...changes.added.map(a => `steps: ${JSON.stringify(a.step)}`),
+    ...changes.skipped.map(x => `exclusions: ${JSON.stringify(x)}`),
+  ];
+  if (entries.length) L.push('Entries to copy into the shipped oscs-reindex.config.json:', ...entries, '');
+
+  L.push(`ATTACHED: ${fileName || 'my oscs-reindex.config.json'}, my config with these changes. Use it to check the changes; copy only the changes listed above into the shipped config.`, '');
+  L.push('HOW TO UPDATE THE APP');
+  L.push('1. On a branch, apply the changes above to oscs-reindex.config.json in the repository.');
+  L.push('2. Update the index count in test/smoke.js and the table in OSCS_REINDEX_FEATURE.md section 9, then run npm test.');
+  L.push('3. Run npm start, click Replace with shipped config, then Check index list on Production: the changed indexes should no longer show as New in Oracle or Missing from Oracle.');
+  L.push('4. Bump the patch version in package.json, open a pull request, merge it, and push the version tag. GitHub Actions builds and publishes the release.');
+  L.push('5. Tell me when it is released. I will click Replace with shipped config in the app.');
+  L.push(`Full instructions: ${UPDATE_DOC_URL}`);
+
+  const names = [...changes.added.map(a => a.step.index), ...changes.skipped.map(x => x.index ?? x.prefix), ...changes.removed.map(s => s.index)];
+  const unique = [...new Set(names)];
+  const subject = `Oracle Access Request Lookup: update the search index list${unique.length ? ` (${unique.slice(0, 3).join(', ')}${unique.length > 3 ? ', ...' : ''})` : ''} - assign to Admin Services`;
+  return { to: CHANGE_REQUEST_TO, subject, body: L.join('\n') };
+}
+
 // Backs up the personal copy, then replaces it with the shipped config.
 function resetUserConfig(dataDir, defaultPath) {
   const userPath = userConfigPath(dataDir);
@@ -1049,6 +1192,32 @@ function createReindexer({ fetch, dataDir, defaultConfigPath, onProgress, onAler
       if (active) throw new Error("Can't replace the config while a rebuild is running.");
       return resetUserConfig(dataDir, defaultConfigPath);
     },
+    // Everything the "Email this change to T&I" button needs. Throws if nothing changed.
+    prepareChangeRequest: ({ version } = {}) => {
+      const userPath = userConfigPath(dataDir);
+      if (!fs.existsSync(userPath)) throw new Error('You have no changes: the app is using the shipped config.');
+      const configText = fs.readFileSync(userPath, 'utf8');
+      const changes = describeConfigChanges(JSON.parse(configText), JSON.parse(fs.readFileSync(defaultConfigPath, 'utf8')));
+      if (!changes.any) throw new Error('Your config matches the shipped one, so there is nothing to send.');
+      // Latest single-step test of each changed index, from the run records.
+      const tests = {};
+      let files = [];
+      try { files = fs.readdirSync(runsDir).filter(f => f.endsWith('.json')); } catch { /* no runs yet */ }
+      const runs = files.map(f => { try { return JSON.parse(fs.readFileSync(path.join(runsDir, f), 'utf8')); } catch { return null; } })
+        .filter(Boolean).sort((a, b) => String(b.startedAt).localeCompare(String(a.startedAt)));
+      for (const r of runs) {
+        for (const s of r.steps ?? []) {
+          if (s.index && s.requestId && !tests[s.index] && ['SUCCEEDED', 'WARNING', 'ERROR'].includes(s.status)) {
+            tests[s.index] = { requestId: s.requestId, instance: r.instance, status: s.status, rows: s.rows, recreateOnly: s.recreateOnly, endedAt: s.endedAt };
+          }
+        }
+      }
+      return { changes, tests, configText };
+    },
+    editUserConfig: change => {
+      if (active) throw new Error("Can't change the config while a rebuild is running.");
+      return editUserConfig(dataDir, defaultConfigPath, change);
+    },
   };
 }
 
@@ -1058,5 +1227,6 @@ module.exports = {
   summarizeConfigDiff, resetUserConfig,
   normalizeStatus, isFinalStatus, isIndexBusy, validateConfig, checkInstance, planSteps,
   buildArgs, assertSubmittable, erpArg, unzipEntries, checkLog, logExcerpt, headTail, makeApi,
-  parseCreatedIndices, compareIndexes, checkCounters,
+  parseCreatedIndices, compareIndexes, checkCounters, editUserConfig,
+  describeConfigChanges, buildChangeRequest,
 };

@@ -357,6 +357,51 @@ async function check(name, fn) {
     assert.deepStrictEqual(oscsMod.checkCounters({ counterCheck: {} }, counters(98072, 49053, 49019)), { issues: [], rows: 49053 });
   });
 
+  await check('OSCS: the app adds, skips and removes indexes in the personal config without hand editing', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oscs-test-'));
+    const cfgPath = path.join(dir, 'default.json');
+    fs.writeFileSync(cfgPath, JSON.stringify(testConfig([{ index: 'fa-hcm-person' }, { index: 'fa-hcm-job' }, { index: 'fa-prc-pa' }])));
+    const edit = c => oscsMod.editUserConfig(dir, cfgPath, c);
+    const user = () => JSON.parse(fs.readFileSync(path.join(dir, 'oscs-reindex.config.json'), 'utf8'));
+    edit({ action: 'addStep', index: 'fa-hcm-new', after: 'fa-hcm-job', area: 'HCM', notes: 'KB1' });
+    assert.deepStrictEqual(user().steps.map(x => x.index), ['fa-hcm-person', 'fa-hcm-job', 'fa-hcm-new', 'fa-prc-pa']);
+    assert.deepStrictEqual(user().steps[2], { index: 'fa-hcm-new', area: 'HCM', notes: 'KB1' });
+    // Skipping a step moves it to the exclusions with its reason.
+    edit({ action: 'addExclusion', index: 'fa-hcm-new', reason: 'Not used' });
+    assert.ok(!user().steps.some(x => x.index === 'fa-hcm-new'));
+    assert.deepStrictEqual(user().exclusions.at(-1), { index: 'fa-hcm-new', reason: 'Not used' });
+    edit({ action: 'removeStep', index: 'fa-prc-pa' });
+    assert.deepStrictEqual(user().steps.map(x => x.index), ['fa-hcm-person', 'fa-hcm-job']);
+    // Refused: bad names, duplicates, skips without a reason; the shipped file is never touched.
+    assert.throws(() => edit({ action: 'addStep', index: '' }), /not a valid index name/);
+    assert.throws(() => edit({ action: 'addStep', index: 'fa-hcm-job' }), /already in the rebuild/);
+    assert.throws(() => edit({ action: 'addExclusion', index: 'fa-x' }), /reason/);
+    assert.strictEqual(JSON.parse(fs.readFileSync(cfgPath, 'utf8')).steps.length, 3);
+  });
+
+  await check('OSCS: change request email lists each index change, its reason and test, for Admin Services', () => {
+    const shipped = testConfig([{ index: 'fa-hcm-person' }, { index: 'fa-hcm-job' }, { index: 'fa-prc-pa' }]);
+    const user = JSON.parse(JSON.stringify(shipped));
+    user.steps.splice(2, 0, { index: 'fa-hcm-new', area: 'HCM', notes: 'Required for X (KB1)' });
+    user.steps = user.steps.filter(x => x.index !== 'fa-prc-pa');
+    user.exclusions.push({ index: 'fa-prc-pa', reason: '0 rows in dev1' });
+    const ch = oscsMod.describeConfigChanges(user, shipped);
+    assert.deepStrictEqual(ch.added.map(a => [a.step.index, a.after]), [['fa-hcm-new', 'fa-hcm-job']]);
+    assert.deepStrictEqual(ch.removed.map(x => x.index), ['fa-prc-pa']);
+    assert.deepStrictEqual(ch.skipped.map(x => x.index), ['fa-prc-pa']);
+    assert.strictEqual(ch.any, true);
+    const mail = oscsMod.buildChangeRequest({ changes: ch, version: '1.6.0', fileName: 'cfg.json',
+      tests: { 'fa-hcm-new': { requestId: '123', instance: 'dev1', status: 'SUCCEEDED', rows: 1234, endedAt: '2026-11-26T17:00:00Z' } } });
+    assert.strictEqual(mail.to, 'ti@davidson.edu');
+    assert.match(mail.subject, /Admin Services/);
+    assert.match(mail.body, /^Please assign this ticket to Admin Services\./);
+    assert.match(mail.body, /- fa-hcm-new, after fa-hcm-job \(HCM\)\n    Reason: Required for X \(KB1\)\n    Tested: request 123 on dev1, SUCCEEDED, 1,234 rows/);
+    assert.match(mail.body, /Reason: 0 rows in dev1/);
+    assert.match(mail.body, /HOW TO UPDATE THE APP/);
+    assert.match(mail.body, /UPDATING_THE_INDEX_LIST\.md/);
+    assert.strictEqual(oscsMod.describeConfigChanges(shipped, shipped).any, false);
+  });
+
   await check('OSCS: Slack turned off for a run posts nothing but still alerts in the app', async () => {
     const oracle = fakeOracle({ logFor: j => (j.args[0] === 'fa-hcm-person'
       ? 'Index fa-hcm-person\nTotal number of rows failed in the payload: 3' : goodLog(j)) });

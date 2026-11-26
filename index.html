@@ -688,13 +688,18 @@
       <div id="oscsConfigDiff" class="oscs-diff" hidden>
         <p><strong>Your config differs from the one shipped with this version of the app.</strong> Your copy is what the app uses. If you didn't change it on purpose, replace it so you get the latest step list and job settings.</p>
         <ul id="oscsConfigDiffList"></ul>
-        <button id="oscsResetConfigBtn" class="btn-secondary">Replace with shipped config</button>
-        <span class="oscs-hint">Your current copy is saved as a backup first.</span>
+        <p>If your changes should apply to everyone's future runs, email them to T&amp;I. The email lists each change with its reason and test results. Your config is saved to Downloads for you to attach.</p>
+        <div class="oscs-row">
+          <button id="oscsRequestChangeBtn" class="btn-secondary">Email this change to T&amp;I</button>
+          <button id="oscsResetConfigBtn" class="btn-secondary">Replace with shipped config</button>
+          <span class="oscs-hint">Replacing saves your current copy as a backup first. Don't replace it until your change is released.</span>
+        </div>
+        <div id="oscsRequestChangeMsg" class="oscs-msg"></div>
       </div>
 
       <div class="oscs-row">
         <select id="oscsMode" aria-label="Run type">
-          <option value="full">Full run: every index, then the ACL jobs</option>
+          <option value="full">Full run: every index, then the ACL and Recruiting jobs</option>
           <option value="single">Test one step</option>
           <option value="resume">Resume a stopped run</option>
         </select>

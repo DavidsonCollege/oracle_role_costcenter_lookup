@@ -78,6 +78,8 @@ It submits Oracle's index ingest job for each search index one at a time and wai
 
 **Config and run records**
 - The list of indexes and the job settings come from `oscs-reindex.config.json`, which ships with the app. **Edit config** opens your own copy. If your copy differs from the shipped one after an update, the tab shows the differences and a **Replace with shipped config** button. Your old copy is backed up first.
+- The **Add to rebuild**, **Skip** and **Remove from rebuild** buttons in the Check index list result change your copy for you.
+- When your copy differs from the shipped config, **Email this change to T&I** opens an email to ti@davidson.edu, for Admin Services. It lists each change with its reason and latest test, plus the steps to update the app, and saves your config to Downloads for you to attach. [UPDATING_THE_INDEX_LIST.md](UPDATING_THE_INDEX_LIST.md) covers making the change permanent.
 - **Run records** opens the folder where every run is saved, one file per run. Resume reads from these files.
 
 ### Slack alerts

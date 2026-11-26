@@ -14,6 +14,7 @@ Electron desktop app (Mac + Windows) that queries Oracle HCM Cloud via REST API 
 | `oscs-reindex.js` | Search index (OSCS) rebuild runner: Oracle ESS job submit/status/log, guardrails, log checks, run records, Slack alerts. No Electron imports, so `test/smoke.js` tests it in plain Node |
 | `oscs-reindex.config.json` | Default step list and job definitions for the rebuild; copied to userData on first "Edit config" and the copy wins after that. The tab warns when the copy differs from the shipped file (`summarizeConfigDiff`) and offers "Replace with shipped config", which backs up the old copy first |
 | `OSCS_REINDEX_FEATURE.md` | Spec for the rebuild feature, including the VERIFY list |
+| `UPDATING_THE_INDEX_LIST.md` | How to make a tested index-list change (add, skip, remove) permanent: shipped config, test count, spec table, release, and what users do after |
 | `assets/` | App icons (`icon.icns` for Mac, `icon.ico` for Windows) |
 | `.github/workflows/build.yml` | GitHub Actions release pipeline (builds Mac + Windows in parallel) |
 | `.github/workflows/pr-check.yml` | Runs `npm test` (`test/smoke.js`) on every PR to main — syntax checks, packaged-file check, read-excel-file parse of `test/fixtures/report.xlsx`. Can't launch Electron or reach Oracle, so major updates still need a manual `npm start` test |

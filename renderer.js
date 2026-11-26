@@ -768,10 +768,16 @@ async function oscsCheckIndexList() {
       ${r.oracleCount} indexes in this log; ${r.matched} match the rebuild's step list.</div>${staleWarn}
       <p class="oscs-sub">New in Oracle (${r.newInOracle.length})</p>
       ${r.newInOracle.length ? '<p class="oscs-hint">Not in the step list or the exclusion list. Add each one to the steps (test it first) or to the exclusions with a reason.</p>' : ''}
-      ${list(r.newInOracle.map(n => `<li>${esc(n)} <button class="linklike" data-whocreated="${esc(n)}">Who created it?</button><div class="oscs-who"></div></li>`))}
+      ${list(r.newInOracle.map(n => `<li data-index="${esc(n)}">${esc(n)}
+        <button class="linklike" data-whocreated="${esc(n)}">Who created it?</button> ·
+        <button class="linklike" data-cfg="add">Add to rebuild</button> ·
+        <button class="linklike" data-cfg="skip">Skip</button>
+        <div class="oscs-cfgform"></div><div class="oscs-who"></div></li>`))}
       <p class="oscs-sub">Missing from Oracle (${r.missingFromOracle.length})</p>
       ${r.missingFromOracle.length ? `<p class="oscs-hint">In the step list but not in this log. If an index was created after ${esc(logDate ?? 'this log')}, it won't be listed until the next reindex run; check again then. Otherwise, check whether Oracle removed or renamed it.</p>` : ''}
-      ${list(r.missingFromOracle.map(n => `<li>${esc(n)}</li>`))}
+      ${list(r.missingFromOracle.map(n => `<li data-index="${esc(n)}">${esc(n)}
+        <button class="linklike" data-cfg="remove">Remove from rebuild</button>
+        <div class="oscs-cfgform"></div></li>`))}
       <p class="oscs-sub">Excluded on purpose (${r.excluded.length})</p>
       ${list(r.excluded.map(x => `<li>${esc(x.index)}${x.reason ? ` <span class="oscs-hint">– ${esc(x.reason)}</span>` : ''}</li>`))}
       ${oscsNotesHtml(r)}`;
@@ -780,6 +786,67 @@ async function oscsCheckIndexList() {
     btn.disabled = false; btn.classList.remove('loading');
   }
 }
+
+// Add / Skip / Remove from the Check index list results: small forms that
+// change the personal config copy, then reload it.
+function oscsDefaultAfter(index) {
+  // Next to related indexes: after the last step sharing the same prefix (fa-hcm-, fa-prc-, fnd-...).
+  const prefix = index.split('-').slice(0, index.startsWith('fnd-') ? 1 : 2).join('-') + '-';
+  const ingest = (oscs.steps ?? []).filter(s => s.kind === 'ingest');
+  const same = ingest.filter(s => s.index.startsWith(prefix));
+  return (same.at(-1) ?? ingest.at(-1))?.index ?? '';
+}
+
+document.getElementById('oscsCheckIndexOut').addEventListener('click', async e => {
+  const b = e.target.closest('[data-cfg], [data-cfgsave], [data-cfgcancel]');
+  if (!b) return;
+  const li = b.closest('li[data-index]');
+  const index = li.dataset.index;
+  const form = li.querySelector('.oscs-cfgform');
+  if (b.dataset.cfgcancel != null) { form.innerHTML = ''; return; }
+
+  if (b.dataset.cfg === 'add') {
+    const after = oscsDefaultAfter(index);
+    const opts = (oscs.steps ?? []).filter(s => s.kind === 'ingest')
+      .map(s => `<option value="${esc(s.index)}"${s.index === after ? ' selected' : ''}>after ${esc(s.index)}</option>`).join('');
+    form.innerHTML = `<div class="oscs-row">
+        <select data-f="after" aria-label="Position">${opts}</select>
+        <input type="text" data-f="area" placeholder="Area, e.g. HCM" />
+        <input type="text" data-f="notes" placeholder="Why it's needed, e.g. Required for Item Catalogs (KB937810)" />
+        <button class="btn-secondary" data-cfgsave="addStep">Add</button>
+        <button class="btn-secondary" data-cfgcancel>Cancel</button></div>`;
+    return;
+  }
+  if (b.dataset.cfg === 'skip') {
+    form.innerHTML = `<div class="oscs-row">
+        <input type="text" data-f="reason" placeholder="Reason, e.g. Not used at Davidson" />
+        <button class="btn-secondary" data-cfgsave="addExclusion">Skip it</button>
+        <button class="btn-secondary" data-cfgcancel>Cancel</button></div>`;
+    return;
+  }
+  if (b.dataset.cfg === 'remove') {
+    form.innerHTML = `<div class="oscs-row"><span class="oscs-hint">Remove ${esc(index)} from the rebuild?</span>
+        <button class="btn-secondary" data-cfgsave="removeStep">Remove</button>
+        <button class="btn-secondary" data-cfgcancel>Cancel</button></div>`;
+    return;
+  }
+
+  const val = f => form.querySelector(`[data-f="${f}"]`)?.value ?? '';
+  const r = await window.hcmAPI.oscsEditConfig({
+    action: b.dataset.cfgsave, index, after: val('after'), area: val('area'), notes: val('notes'), reason: val('reason'),
+  });
+  if (!r.ok) {
+    form.insertAdjacentHTML('beforeend', `<p class="oscs-msg bad">${esc(r.error)}</p>`);
+    return;
+  }
+  li.querySelectorAll('[data-cfg]').forEach(x => { x.disabled = true; });
+  const next = b.dataset.cfgsave === 'addStep'
+    ? ' To test it, choose a test environment at the top, then Test one step.' : '';
+  // After adding, a failed test can still turn it into a skip from here.
+  const skipInstead = b.dataset.cfgsave === 'addStep' ? ' <button class="linklike" data-cfg="skip">Skip it instead</button>' : '';
+  form.innerHTML = `<p class="oscs-msg good">${esc(r.message)} Saved in your config.${esc(next)} To make it permanent for everyone, send the change to the app owner.${skipInstead}</p>`;
+  await oscsLoadConfig();
+});
 
 // Ingest requests (any submitter) that name this index, newest first.
 document.getElementById('oscsCheckIndexOut').addEventListener('click', async e => {
@@ -842,6 +909,14 @@ document.getElementById('oscsResetConfigBtn').addEventListener('click', async ()
   await oscsLoadConfig();
   if (!r.ok) oscsMsg('oscsConfigMsg', r.error, 'bad');
   else if (r.backup) oscsMsg('oscsConfigMsg', `Config replaced. Your old copy was saved as ${r.backup}`, 'good');
+});
+document.getElementById('oscsRequestChangeBtn').addEventListener('click', async () => {
+  const r = await window.hcmAPI.oscsRequestConfigChange();
+  if (!r.ok) return oscsMsg('oscsRequestChangeMsg', r.error, 'bad');
+  const name = r.file.split(/[\\/]/).pop();
+  oscsMsg('oscsRequestChangeMsg', r.truncated
+    ? `Your email app is open. The request was too long for an email link, so paste it from your clipboard into the email, then attach ${name} from your Downloads folder and send it.`
+    : `Your email app is open with the request. Attach ${name} from your Downloads folder (it's shown in a window) and send it. The full text is also on your clipboard.`, 'good');
 });
 document.getElementById('oscsRunsBtn').addEventListener('click', () => window.hcmAPI.oscsOpenRunsFolder());
 document.getElementById('oscsInspectBtn').addEventListener('click', oscsInspect);
