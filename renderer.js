@@ -538,7 +538,7 @@ async function oscsLoadConfig() {
 
   oscsMsg('oscsSlackMsg', info.slackConfigured
     ? 'A Slack webhook is saved (encrypted on this computer).'
-    : 'No Slack webhook saved. Alerts will only show in the app.', 'oscs-hint');
+    : 'No Slack webhook saved. Alerts will only show in the app until you add it (steps above).', 'oscs-hint');
 
   const diffBox = document.getElementById('oscsConfigDiff');
   diffBox.hidden = !info.differences;

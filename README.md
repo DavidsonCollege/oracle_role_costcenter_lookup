@@ -1,6 +1,6 @@
 # Oracle Access Request Lookup
 
-Electron desktop app for looking up Oracle HCM worker assignments, assigned security roles, auto-provisioning rules, and cost center manager information.
+Electron desktop app for looking up Oracle HCM worker assignments, assigned security roles, auto-provisioning rules, and cost center manager information. It also rebuilds Oracle's search indexes on a non-Production instance after a Prod-to-Test refresh, and posts an alert to Slack if a step fails.
 
 ---
 
@@ -29,6 +29,60 @@ Electron desktop app for looking up Oracle HCM worker assignments, assigned secu
 
 ---
 
+## Using the App
+
+Enter the environment, username and password at the top. Below them are two tabs; the app remembers which one you used last.
+
+- **Lookups**: person, assignment and security role lookups, cost center reports, and Cost Center Access (add or remove a cost center role).
+- **Scheduled Processes**: Search Index Rebuild.
+
+### Search Index Rebuild
+
+Use this only after a Prod-to-Test refresh of a non-Production instance. **Don't run it after quarterly updates**: Oracle reingests changed indexes itself during updates.
+
+It submits Oracle's index ingest job for each search index one at a time and waits for each to finish. It then runs **Compute Users ACL** and **Process Access Control Lists for Learning Items for OSCS**. It stops at the first error or warning and alerts the team. It runs as you, with the credentials at the top, so your Oracle account needs permission to submit these jobs.
+
+**Safeguards**
+- It refuses to run against Production.
+- You must type the instance name (for example `dev1`) to confirm.
+- It never submits a step with a blank index name.
+- The two ACL jobs run only after every index step has succeeded.
+
+**Running it**
+1. Pick the environment at the top and open the **Scheduled Processes** tab.
+2. Choose a run type:
+   - **Full run**: every index, then the ACL jobs. A full run takes about 30 minutes.
+   - **Test one step**: runs a single index or ACL job.
+   - **Resume a stopped run**: picks up a run that stopped, skipping the steps that already succeeded.
+3. Type the instance name to confirm and click **Start**. The table shows each step's status, Oracle request number, rows ingested and times.
+4. **Stop after current step** lets the running Oracle job finish and then stops submitting more. It never cancels a job in Oracle. If you close the window during a run, the app asks first.
+
+**When it stops**
+- The app shows the reason, posts it to Slack and leaves the remaining steps pending.
+- Look at the request in Oracle's **Scheduled Processes**, fix the cause, then use **Resume a stopped run**.
+- If Oracle starts retrying a failed request on its own, the app stops right away rather than waiting. Cancel that request in Scheduled Processes if it shouldn't run again.
+
+**What the results mean**
+- **recreate only** in the Rows column is expected for some indexes, such as `fa-hcm-acl`, `fa-hcm-learn-acl`, `fnd-recentsearch` and `fa-hcm-person-results`. Oracle rebuilds them empty and fills them as people use the system.
+- **Inspect a request** at the bottom of the tab is read-only and works on any instance, including Production. Use it to look at a past request's status, parameters and log. Each box has a **Copy** button.
+
+**Config and run records**
+- The list of indexes and the job settings come from `oscs-reindex.config.json`, which ships with the app. **Edit config** opens your own copy. If your copy differs from the shipped one after an update, the tab shows the differences and a **Replace with shipped config** button. Your old copy is backed up first.
+- **Run records** opens the folder where every run is saved, one file per run. Resume reads from these files.
+
+### Slack alerts
+
+Rebuild alerts go to **#team-admin-services-private**. Each computer that runs rebuilds needs the webhook URL entered once:
+
+1. In 1Password, open **Slack webhook – Search Index Rebuild alerts** and copy its credential, a URL starting with `https://hooks.slack.com/services/`. If you can't see the item, ask for access to it.
+2. On the **Scheduled Processes** tab, paste it into **Slack alerts**, click **Save**, then click **Send test** and check that the message arrives in the channel.
+
+The URL is stored encrypted on your computer, never in the app's settings file or this repository, and it stays through app updates. You'll need to enter it again on a new computer or user account. Treat it like a password: anyone who has it can post to the channel. Don't paste it into chat, email or tickets. **Remove** deletes it from your computer.
+
+Without a webhook, alerts only show in the app.
+
+---
+
 ## Setting Up for a New Oracle Instance
 
 `PROJECT_NOTES.txt` in the repository root contains a full technical reference — API details, SOAP gotchas, report column names, IPC patterns, and deployment notes useful for anyone developing or adapting this app.
@@ -52,7 +106,7 @@ npm install
 
 ### 2. Update the Environment URLs
 
-Open `index.html` and find the environment dropdown (around line 425). Replace `exci` in each URL with your organisation's equivalent segment:
+Open `index.html` and find the environment dropdown (search for `saasfaprod1`). Replace `exci` in each URL with your organisation's equivalent segment:
 
 ```html
 <option value="https://fa-exci-saasfaprod1.fa.ocs.oraclecloud.com">Production</option>
@@ -69,13 +123,13 @@ Download the `.catalog` report files from the repository and import them into yo
 
 ### 4. Update the Report Paths
 
-Open `main.js` and update the three report paths to match where you imported them. Search for `Custom/Jessamyn` — there are four occurrences:
+Open `main.js` and update the three report paths to match where you imported them. Search for `Custom/Jessamyn`; the paths are for these reports (the other matches are comments):
 
-| Line | Report |
-|------|--------|
-| 118 | Cost Center Hierarchy |
-| 348 | Cost Center Manager |
-| 430 | Auto-Provisioning Rules |
+| Report | File |
+|--------|------|
+| Cost Center Hierarchy | `AccountHierarchy/CostCenterHierarchy.xdo` |
+| Cost Center Manager | `CostCenterManager/DeptCostCenterMgr.xdo` |
+| Auto-Provisioning Rules | `Auto-Provisioning Rules/Auto-Provisioning Rules.xdo` |
 
 Replace the paths with your own, keeping the `.xdo` extension:
 ```js
@@ -86,7 +140,17 @@ Replace the paths with your own, keeping the `.xdo` extension:
 
 > **Important:** The `.xdo` extension is required. Omitting it causes a misleading permission error from Oracle rather than a "not found" error.
 
-### 5. Test Locally
+### 5. Configure the Search Index Rebuild
+
+Open `oscs-reindex.config.json` and set:
+
+- `prodHosts`: your Production host name. The rebuild refuses to run against it.
+- `nonProdHostPattern`: a pattern matching your non-Production hosts. Its first group is the instance name people type to confirm, such as `dev1`.
+- `steps`: the indexes to rebuild. Oracle's list varies by instance, so test each one with **Test one step** and remove any that load 0 rows when they shouldn't.
+
+`OSCS_REINDEX_FEATURE.md` has the full spec. For Slack alerts, create your own Slack app with an incoming webhook for your channel, and change the channel name shown on the Scheduled Processes tab in `index.html`.
+
+### 6. Test Locally
 
 ```bash
 npm start
@@ -94,7 +158,7 @@ npm start
 
 Enter one of your environment URLs, your Oracle username, and password. Try looking up a known worker by person number to confirm the connection works before testing name search and reports.
 
-### 6. Set Up Your Release Pipeline
+### 7. Set Up Your Release Pipeline
 
 In your forked GitHub repository:
 - Go to **Settings** → **Actions** → **General**

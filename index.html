@@ -536,6 +536,9 @@
     }
     .btn-secondary:hover:not(:disabled) { background: #f9fafb; border-color: #9ca3af; }
     .oscs-hint { font-size: 0.78rem; color: #6b7280; }
+    .oscs-steps { margin: 0 0 0.4rem; padding-left: 1.2rem; line-height: 1.45; }
+    .oscs-steps li { margin-bottom: 0.2rem; }
+    .oscs-steps-note { margin: 0 0 0.6rem; }
     .oscs-msg { font-size: 0.8rem; white-space: pre-wrap; margin-bottom: 0.6rem; }
     .oscs-msg.bad { color: #991b1b; }
     .oscs-msg.good { color: #166534; }
@@ -707,6 +710,11 @@
       <div id="oscsProgress"></div>
 
       <p class="oscs-sub">Slack alerts (#team-admin-services-private)</p>
+      <ol class="oscs-steps oscs-hint">
+        <li>In 1Password, open <strong>Slack webhook – Search Index Rebuild alerts</strong> and copy its <strong>credential</strong> (a URL starting with https://hooks.slack.com/services/). If you can't see that item, ask for access to it.</li>
+        <li>Paste it below and click <strong>Save</strong>, then <strong>Send test</strong> and check that the message arrives in #team-admin-services-private.</li>
+      </ol>
+      <p class="oscs-hint oscs-steps-note">Do this once on each computer you run rebuilds from. The URL is saved encrypted on this computer and stays through app updates. Don't paste it in chat, email or tickets.</p>
       <div class="oscs-row">
         <input type="password" id="oscsSlackUrl" placeholder="Slack incoming webhook URL" autocomplete="off" />
         <button id="oscsSlackSaveBtn" class="btn-secondary">Save</button>
