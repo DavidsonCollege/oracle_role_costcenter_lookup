@@ -464,7 +464,7 @@ SmartScreen shows an "unknown publisher" warning on install; users click More in
 - **403 on `/userAccounts`** now shows a clear message ("Connect to the Davidson network") instead of the raw API error.
 
 ### Search Index Rebuild (OSCS reindex after a P2T refresh)
-- "Search Index Rebuild" lives on the **Scheduled Processes** tab (credentials stay at the top; the original lookups are on the **Lookups** tab; the last-used tab is remembered in localStorage). Spec in `OSCS_REINDEX_FEATURE.md`. Runs as the signed-in user with the same Basic auth as the rest of the app.
+- "Search Index Rebuild" runs from the **Run Index Jobs** tab (`panel-scheduled`; ids kept from its old name, Scheduled Processes) (run controls and progress only). Check index list, Inspect, Find latest, the rebuild config (diff, Edit/Reload, Email to T&I) and Slack setup are on the **Indexing Tools** tab (`panel-tools`). Credentials stay at the top; the original lookups are on the **Lookups** tab; the last-used tab is remembered in localStorage. `oscsLoadConfig()` runs when either rebuild tab opens and fills both `oscsConfigMsg` and `oscsToolsConfigMsg`. Spec in `OSCS_REINDEX_FEATURE.md`. Runs as the signed-in user with the same Basic auth as the rest of the app.
 - Modes: full run, test one step, resume a stopped run (uses the current config's step list matched by step ID; skips steps that already succeeded in that run).
 - Stops on any non-SUCCEEDED status or failed log check (section 7a of the spec), retries "index is being used by other job(s)" 3 times 5 minutes apart, alerts in-app and to Slack.
 - "Stop after current step" never cancels the Oracle job; it stops submitting more. Closing the window during a run asks first.

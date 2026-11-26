@@ -530,18 +530,21 @@ async function oscsLoadConfig() {
   if (info.errors.length) lines.push(...info.errors);
   if (jobProblems.length) lines.push('Before a full run, finish these (a single-step test only needs its own job):', ...jobProblems.map(p => `• ${p}`));
   oscsMsg('oscsConfigMsg', lines.join('\n'), info.errors.length || jobProblems.length ? 'bad' : 'oscs-hint');
+  oscsMsg('oscsToolsConfigMsg', lines.join('\n'), info.errors.length || jobProblems.length ? 'bad' : 'oscs-hint');
 
   const hint = document.getElementById('oscsConfirmHint');
   hint.textContent = info.instance?.ok
     ? `Type "${info.instance.name}" to confirm this instance.`
     : (info.instance?.error ?? '');
 
+  oscsSetSlackState(info.slackConfigured);
   oscsMsg('oscsSlackMsg', info.slackConfigured
     ? 'A Slack webhook is saved (encrypted on this computer).'
-    : 'No Slack webhook saved. Alerts will only show in the app until you add it (steps above).', 'oscs-hint');
+    : 'No Slack webhook saved. Alerts will only show in the app until you add it (steps above).', info.slackConfigured ? 'oscs-hint' : 'bad');
 
   const diffBox = document.getElementById('oscsConfigDiff');
   diffBox.hidden = !info.differences;
+  document.getElementById('oscsConfigDiffNote').hidden = !info.differences;
   document.getElementById('oscsConfigDiffList').innerHTML = (info.differences ?? []).map(d => `<li>${esc(d)}</li>`).join('');
 
   if (info.running) oscsRender(info.running);
@@ -588,6 +591,10 @@ async function oscsStart() {
     fromStepId : document.getElementById('oscsFromStep').value,
     slack      : document.getElementById('oscsSlackOn').checked,
   };
+
+  // A real run without a webhook means nobody outside the app hears about a failure.
+  if (mode !== 'single' && params.slack && oscs.slackConfigured === false &&
+      !confirm('No Slack webhook is saved on this computer, so the team won\'t get alerts from this run. Start anyway?\n\nTo set it up first, click Cancel, then Set up Slack alerts.')) return;
 
   // Guardrail 5 exception: a single ACL job is allowed only as a deliberate test.
   if (mode === 'single' && params.stepId.startsWith('acl:') &&
@@ -841,7 +848,7 @@ document.getElementById('oscsCheckIndexOut').addEventListener('click', async e =
   }
   li.querySelectorAll('[data-cfg]').forEach(x => { x.disabled = true; });
   const next = b.dataset.cfgsave === 'addStep'
-    ? ' To test it, choose a test environment at the top, then Test one step.' : '';
+    ? ' To test it, choose a test environment at the top, then Test one step on the Run Index Jobs tab.' : '';
   // After adding, a failed test can still turn it into a skip from here.
   const skipInstead = b.dataset.cfgsave === 'addStep' ? ' <button class="linklike" data-cfg="skip">Skip it instead</button>' : '';
   form.innerHTML = `<p class="oscs-msg good">${esc(r.message)} Saved in your config.${esc(next)} To make it permanent for everyone, send the change to the app owner.${skipInstead}</p>`;
@@ -883,10 +890,18 @@ document.getElementById('oscsFindOut').addEventListener('click', e => {
   oscsInspect();
 });
 
+// Highlights the Slack setup and shows a note on Run Index Jobs until a webhook is saved.
+function oscsSetSlackState(configured) {
+  oscs.slackConfigured = configured;
+  document.getElementById('oscsSlackSection').classList.toggle('needs-setup', !configured);
+  document.getElementById('oscsSlackNote').hidden = configured;
+}
+
 async function oscsSaveSlack(url) {
   const r = await window.hcmAPI.oscsSetSlack({ url });
   if (!r.ok) return oscsMsg('oscsSlackMsg', r.error, 'bad');
   document.getElementById('oscsSlackUrl').value = '';
+  oscsSetSlackState(r.configured);
   oscsMsg('oscsSlackMsg', r.configured ? 'Slack webhook saved (encrypted on this computer).' : 'Slack webhook removed.', 'good');
 }
 
@@ -899,7 +914,7 @@ document.getElementById('oscsStopBtn').addEventListener('click', async () => {
 });
 document.getElementById('oscsOpenConfigBtn').addEventListener('click', async () => {
   const r = await window.hcmAPI.oscsOpenConfig();
-  if (!r.ok) oscsMsg('oscsConfigMsg', r.error, 'bad');
+  if (!r.ok) oscsMsg('oscsToolsConfigMsg', r.error, 'bad');
   else oscsLoadConfig();
 });
 document.getElementById('oscsReloadBtn').addEventListener('click', oscsLoadConfig);
@@ -907,8 +922,8 @@ document.getElementById('oscsResetConfigBtn').addEventListener('click', async ()
   if (!confirm('Replace your config with the shipped one? Your current copy will be saved as a backup.')) return;
   const r = await window.hcmAPI.oscsResetConfig();
   await oscsLoadConfig();
-  if (!r.ok) oscsMsg('oscsConfigMsg', r.error, 'bad');
-  else if (r.backup) oscsMsg('oscsConfigMsg', `Config replaced. Your old copy was saved as ${r.backup}`, 'good');
+  if (!r.ok) oscsMsg('oscsToolsConfigMsg', r.error, 'bad');
+  else if (r.backup) oscsMsg('oscsToolsConfigMsg', `Config replaced. Your old copy was saved as ${r.backup}`, 'good');
 });
 document.getElementById('oscsRequestChangeBtn').addEventListener('click', async () => {
   const r = await window.hcmAPI.oscsRequestConfigChange();
@@ -929,7 +944,7 @@ document.getElementById('oscsSlackTestBtn').addEventListener('click', async () =
 });
 // The confirmation hint depends on the selected environment.
 document.getElementById('baseUrl').addEventListener('change', () => {
-  if (activeTab === 'scheduled') oscsLoadConfig();
+  if (activeTab !== 'lookups') oscsLoadConfig();
 });
 window.hcmAPI.onOscsProgress(run => {
   oscsRender(run);
@@ -952,7 +967,7 @@ function showTab(name) {
     t.tabIndex = on ? 0 : -1;
     document.getElementById(t.getAttribute('aria-controls')).hidden = !on;
   });
-  if (name === 'scheduled') oscsLoadConfig();
+  if (name !== 'lookups') oscsLoadConfig();
   try { localStorage.setItem('activeTab', name); } catch { /* storage unavailable */ }
 }
 
@@ -968,6 +983,23 @@ document.querySelectorAll('.tabs .tab').forEach(t => {
   });
 });
 
+// Links that open another tab, e.g. from the rebuild to the config on Indexing Tools.
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-goto-tab]');
+  if (!b) return;
+  showTab(b.dataset.gotoTab);
+  const target = b.dataset.goto && document.getElementById(b.dataset.goto);
+  if (target) {
+    target.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    target.querySelector('input')?.focus({ preventScroll: true });
+  }
+});
+
+
+let restoredTab = false;
 try {
-  if (localStorage.getItem('activeTab') === 'scheduled') showTab('scheduled');
+  const saved = localStorage.getItem('activeTab');
+  if (saved === 'scheduled' || saved === 'tools') { showTab(saved); restoredTab = true; }
 } catch { /* storage unavailable */ }
+// Otherwise load the config anyway, so both rebuild tabs already show whether Slack is set up.
+if (!restoredTab) oscsLoadConfig();

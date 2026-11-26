@@ -31,10 +31,11 @@ Electron desktop app for looking up Oracle HCM worker assignments, assigned secu
 
 ## Using the App
 
-Enter the environment, username and password at the top. Below them are two tabs; the app remembers which one you used last.
+Enter the environment, username and password at the top. Below them are three tabs; the app remembers which one you used last.
 
 - **Lookups**: person, assignment and security role lookups, cost center reports, and Cost Center Access (add or remove a cost center role).
-- **Scheduled Processes**: Search Index Rebuild.
+- **Run Index Jobs**: running the Search Index Rebuild and watching its progress.
+- **Indexing Tools**: Check index list, Inspect a request, Find latest, the rebuild config, and Slack alert setup.
 
 ### Search Index Rebuild
 
@@ -50,7 +51,7 @@ It submits Oracle's index ingest job for each search index one at a time and wai
 - For the Recruiting jobs, the app also reads Oracle's progress counters and the log. A run that processed nothing, had failed items or logged "Job failed" stops with a warning.
 
 **Running it**
-1. Pick the environment at the top and open the **Scheduled Processes** tab.
+1. Pick the environment at the top and open the **Run Index Jobs** tab.
 2. Choose a run type:
    - **Full run**: every index, then the ACL jobs. A full run takes about 30 minutes.
    - **Test one step**: runs a single index or ACL job.
@@ -65,33 +66,40 @@ It submits Oracle's index ingest job for each search index one at a time and wai
 
 **What the results mean**
 - **recreate only** in the Rows column is expected for some indexes, such as `fa-hcm-acl`, `fa-hcm-learn-acl`, `fnd-recentsearch` and `fa-hcm-person-results`. Oracle rebuilds them empty and fills them as people use the system.
-- **Inspect a request** at the bottom of the tab is read-only and works on any instance, including Production. Use it to look at a past request's status, parameters and log. Each box has a **Copy** button.
+- **Run records** opens the folder where every run is saved, one file per run. Resume reads from these files.
+- If your config differs from the one shipped with the app, the tab says so and links to **Rebuild config** on the Indexing Tools tab.
+
+### Indexing Tools
+
+Everything on this tab is read-only in Oracle and works on any instance, including Production.
 
 **Check index list (after the Production quarterly update)**
-- Choose Production at the top and click **Check index list**. It's read-only. The app finds Oracle's latest reindex request (FndOSCSReindexJob, submitted by FAADMIN), reads the `Indices (created): [...]` line in its log, and lists:
+- Choose Production at the top and click **Check index list**. The app finds Oracle's latest reindex request (FndOSCSReindexJob, submitted by FAADMIN), reads the `Indices (created): [...]` line in its log, and lists:
   - **New in Oracle**: in Production but not in the step list or the exclusion list. Add it to the steps (test it first), or add it to the exclusions with a reason.
   - **Missing from Oracle**: in the step list but not in that log. An index created after the log's date won't be listed until the next reindex run, so check again then. Otherwise check whether Oracle removed or renamed it.
-- The app shows the date of the log it read and warns if it's more than a week old.
   - **Excluded on purpose**: indexes we deliberately don't rebuild, with the reason.
-- **Find latest**, next to Inspect, finds the newest reindex or index ingest request and inspects it for you.
-- If either one can't find the request, open **How the app searched** under the result and send that text to the app's owner.
+- The app shows the date of the log it read and warns if it's more than a week old.
 
-**Config and run records**
-- The list of indexes and the job settings come from `oscs-reindex.config.json`, which ships with the app. **Edit config** opens your own copy. If your copy differs from the shipped one after an update, the tab shows the differences and a **Replace with shipped config** button. Your old copy is backed up first.
+**Inspect a request and Find latest**
+- **Inspect a request** shows a request's status, parameters and log. Use it to find out why a rebuild step stopped, or to read the parameters a past run used. Each box has a **Copy** button.
+- **Find latest** finds the newest request for a job and inspects it, so you don't need the request ID. Use the reindex job (FndOSCSReindexJob) to check that Oracle's own reindex ran after a quarterly update and read its log. Use the index ingest job (FndOSCSIndexIngestJob) to see the most recent single-index ingest, for example one someone ran by hand outside the app.
+- If Check index list or Find latest can't find the request, open **How the app searched** under the result and send that text to the app's owner.
+
+**Rebuild config**
+- The list of indexes and the job settings come from `oscs-reindex.config.json`, which ships with the app. **Edit config** opens your own copy. If your copy differs from the shipped one after an update, this section shows the differences and a **Replace with shipped config** button. Your old copy is backed up first.
 - The **Add to rebuild**, **Skip** and **Remove from rebuild** buttons in the Check index list result change your copy for you.
 - When your copy differs from the shipped config, **Email this change to T&I** opens an email to ti@davidson.edu, for Admin Services. It lists each change with its reason and latest test, plus the steps to update the app, and saves your config to Downloads for you to attach. [UPDATING_THE_INDEX_LIST.md](UPDATING_THE_INDEX_LIST.md) covers making the change permanent.
-- **Run records** opens the folder where every run is saved, one file per run. Resume reads from these files.
 
 ### Slack alerts
 
 Rebuild alerts go to **#team-admin-services-private**. Each computer that runs rebuilds needs the webhook URL entered once:
 
 1. In 1Password, open **Slack webhook – Search Index Rebuild alerts** and copy its credential, a URL starting with `https://hooks.slack.com/services/`. If you can't see the item, ask for access to it.
-2. On the **Scheduled Processes** tab, paste it into **Slack alerts**, click **Save**, then click **Send test** and check that the message arrives in the channel.
+2. On the **Indexing Tools** tab, paste it into **Slack alerts**, click **Save**, then click **Send test** and check that the message arrives in the channel.
 
 The URL is stored encrypted on your computer, never in the app's settings file or this repository, and it stays through app updates. You'll need to enter it again on a new computer or user account. Treat it like a password: anyone who has it can post to the channel. Don't paste it into chat, email or tickets. **Remove** deletes it from your computer.
 
-Without a webhook, alerts only show in the app.
+Without a webhook, alerts only show in the app. Until one is saved on your computer, the Slack alerts section on Indexing Tools is highlighted, the Run Index Jobs tab shows a note with a **Set up Slack alerts** link, and starting a full run or resume with Slack turned on asks you to confirm first.
 
 **Testing without posting:** clear **Post alerts to Slack for this run** before clicking **Start**. It starts cleared for **Test one step** and ticked for full and resumed runs. Alerts still appear in the app, and the run record notes that Slack was off. **Send test** always posts.
 
@@ -164,7 +172,7 @@ Open `oscs-reindex.config.json` and set:
 - `indexCheck`: the job name, submitter and number of days Check index list searches.
 - `steps`: the indexes to rebuild. Oracle's list varies by instance, so test each one with **Test one step** and remove any that load 0 rows when they shouldn't.
 
-`OSCS_REINDEX_FEATURE.md` has the full spec. For Slack alerts, create your own Slack app with an incoming webhook for your channel, and change the channel name shown on the Scheduled Processes tab in `index.html`.
+`OSCS_REINDEX_FEATURE.md` has the full spec. For Slack alerts, create your own Slack app with an incoming webhook for your channel, and change the channel name shown on the Indexing Tools tab in `index.html`.
 
 ### 6. Test Locally
 

@@ -2,7 +2,7 @@
 
 What to do once a change to the Search Index Rebuild's index list has been tested and should apply to everyone's future runs. That covers adding an index, skipping one or removing one.
 
-Changes made with the buttons on the Scheduled Processes tab (or **Edit config**) are saved only in that person's copy of the config. To make a change permanent, it goes into the shipped `oscs-reindex.config.json` in this repository and out in a new release.
+Changes made with the buttons on the Indexing Tools tab (or **Edit config**) are saved only in that person's copy of the config. To make a change permanent, it goes into the shipped `oscs-reindex.config.json` in this repository and out in a new release.
 
 ## 1. Collect the change
 
@@ -17,7 +17,7 @@ Requests usually arrive as a T&I ticket assigned to Admin Services, sent from th
 | Reason | `Required for Redwood Item Catalogs since 26D (KB937810)` |
 | Test request number and environment | `10536700 on dev1, Succeeded, 1,234 rows` |
 
-The person who tested it can see their changes on the Scheduled Processes tab under **Your config differs from the one shipped**. Their config file's location is shown at the top of the same tab, after "steps from your config:".
+The person who tested it can see their changes on the Indexing Tools tab, under **Rebuild config**, where it says **Your config differs from the one shipped**. Their config file's location is shown in the same section, after "steps from your config:".
 
 Copy only the change itself, not their whole config file. Their copy may differ in other ways that shouldn't ship.
 
@@ -73,9 +73,9 @@ If the index was a step, remove it from `steps`.
 ## 4. Check it in the app
 
 1. Run `npm start`.
-2. On the Scheduled Processes tab, if it says your config differs from the shipped one, click **Replace with shipped config**. Your current copy is backed up first.
-3. Confirm the change shows in the step list for **Test one step**.
-4. Choose **Production** and click **Check index list**. The index should no longer appear under **New in Oracle** or **Missing from Oracle**. If it was skipped, it should appear under **Excluded on purpose** with its reason.
+2. On the Indexing Tools tab, under **Rebuild config**, if it says your config differs from the shipped one, click **Replace with shipped config**. Your current copy is backed up first.
+3. On the Run Index Jobs tab, confirm the change shows in the step list for **Test one step**.
+4. Choose **Production**, go back to the Indexing Tools tab and click **Check index list**. The index should no longer appear under **New in Oracle** or **Missing from Oracle**. If it was skipped, it should appear under **Excluded on purpose** with its reason.
 
 ## 5. Release it
 
@@ -97,7 +97,7 @@ If you use Claude Code, you can instead tell it the change from step 1 and say "
 ## 6. After the release
 
 1. Tell the people who run rebuilds that the release is out. Installed apps update themselves.
-2. Each of them opens the Scheduled Processes tab. If it says **Your config differs from the one shipped**, they check the list of differences:
+2. Each of them opens the Indexing Tools tab. If **Rebuild config** says **Your config differs from the one shipped**, they check the list of differences:
    - If it lists only the change that was just released, or nothing they need, they click **Replace with shipped config**. Their old copy is backed up first.
    - If it lists other changes of theirs, those still need to go through steps 1 to 5 before they replace their copy. Otherwise those changes are lost from their config, although the backup keeps them.
 3. Record the change in the quarterly record in the How To, with the release version.

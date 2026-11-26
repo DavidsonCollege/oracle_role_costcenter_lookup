@@ -747,7 +747,7 @@ function createReindexer({ fetch, dataDir, defaultConfigPath, onProgress, onAler
     return [
       `${ok} of ${run.steps.length} steps succeeded on ${run.instance} in ${mins} min${run.resumes?.length ? ` (resumed ${run.resumes.length} time${run.resumes.length === 1 ? '' : 's'})` : ''}.`,
       ...acl,
-      'See the table on the Scheduled Processes tab for every step.',
+      'See the table on the Run Index Jobs tab in the app for every step.',
     ].join('\n');
   }
 
