@@ -176,6 +176,7 @@
     }
 
     button.loading .spinner { display: block; }
+    .btn-secondary .spinner { border-color: rgba(55,65,81,0.25); border-top-color: #374151; }
     button.loading .btn-label { display: none; }
 
     @keyframes spin { to { transform: rotate(360deg); } }
@@ -536,6 +537,11 @@
     }
     .btn-secondary:hover:not(:disabled) { background: #f9fafb; border-color: #9ca3af; }
     .oscs-hint { font-size: 0.78rem; color: #6b7280; }
+    .oscs-check { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.82rem; color: #374151; }
+    .oscs-check input { width: auto; margin: 0; }
+    .oscs-steps { margin: 0 0 0.4rem; padding-left: 1.2rem; line-height: 1.45; }
+    .oscs-steps li { margin-bottom: 0.2rem; }
+    .oscs-steps-note { margin: 0 0 0.6rem; }
     .oscs-msg { font-size: 0.8rem; white-space: pre-wrap; margin-bottom: 0.6rem; }
     .oscs-msg.bad { color: #991b1b; }
     .oscs-msg.good { color: #166534; }
@@ -574,6 +580,23 @@
       margin-bottom: 0.8rem;
     }
     .oscs-diff ul { margin: 0.4rem 0 0.6rem 1.2rem; }
+    /* Slack setup is highlighted until a webhook is saved on this computer. */
+    .oscs-slack.needs-setup {
+      background: #fffbeb;
+      border: 1.5px solid #f59e0b;
+      border-radius: 6px;
+      padding: 0.1rem 0.8rem 0.4rem;
+      margin-top: 1.1rem;
+    }
+    .oscs-slack.needs-setup .oscs-sub { color: #92400e; }
+    .oscs-slack-badge { display: none; font-size: 0.68rem; font-weight: 700; color: #92400e; background: #fde68a; border-radius: 4px; padding: 0.05rem 0.4rem; margin-left: 0.4rem; }
+    .oscs-slack.needs-setup .oscs-slack-badge { display: inline-block; }
+    .oscs-slack-note { color: #92400e; background: #fffbeb; border: 1px solid #fcd34d; border-radius: 6px; padding: 0.45rem 0.7rem; }
+    .oscs-check-list { margin: 0.2rem 0 0.6rem 1.2rem; font-size: 0.8rem; }
+    .oscs-check-list li { margin-bottom: 0.15rem; }
+    .oscs-details { font-size: 0.75rem; color: #6b7280; margin-bottom: 0.6rem; }
+    .oscs-details pre { white-space: pre-wrap; word-break: break-word; margin: 0.3rem 0 0; }
+    .linklike { background: none; border: none; padding: 0; color: #1d4ed8; text-decoration: underline; cursor: pointer; font: inherit; }
     .oscs-runhead { font-size: 0.82rem; margin-top: 0.8rem; }
     .oscs-boxhead { display: flex; align-items: center; justify-content: space-between; }
     .btn-copy { font-size: 0.72rem; padding: 0.2rem 0.6rem; }
@@ -619,7 +642,8 @@
 
     <div class="tabs" role="tablist" aria-label="Tools">
       <button class="tab" role="tab" id="tab-lookups" aria-controls="panel-lookups" aria-selected="true" data-tab="lookups">Lookups</button>
-      <button class="tab" role="tab" id="tab-scheduled" aria-controls="panel-scheduled" aria-selected="false" data-tab="scheduled" tabindex="-1">Scheduled Processes</button>
+      <button class="tab" role="tab" id="tab-scheduled" aria-controls="panel-scheduled" aria-selected="false" data-tab="scheduled" tabindex="-1">Run Index Jobs</button>
+      <button class="tab" role="tab" id="tab-tools" aria-controls="panel-tools" aria-selected="false" data-tab="tools" tabindex="-1">Indexing Tools</button>
     </div>
 
     <div class="tab-panel" role="tabpanel" id="panel-lookups" aria-labelledby="tab-lookups">
@@ -669,21 +693,16 @@
 
       <div class="oscs-note">
         Use only after a Prod-to-Test refresh of a non-Prod instance. <strong>Don't run this after quarterly updates</strong>: Oracle reingests changed indexes itself during updates.
-        It never runs against Production. It submits the index ingest job for each index one at a time, waits for each to finish, then runs Compute Users ACL and the Learning ACL job. It stops at the first error or warning and alerts the team.
+        It never runs against Production. It submits the index ingest job for each index one at a time, waits for each to finish, then runs Compute Users ACL, the Learning ACL job and the three Recruiting index jobs. It stops at the first error or warning and alerts the team.
         Uses the environment, username and password above; your account needs the privilege to submit these jobs.
       </div>
 
       <div id="oscsConfigMsg" class="oscs-msg"></div>
-      <div id="oscsConfigDiff" class="oscs-diff" hidden>
-        <p><strong>Your config differs from the one shipped with this version of the app.</strong> Your copy is what the app uses. If you didn't change it on purpose, replace it so you get the latest step list and job settings.</p>
-        <ul id="oscsConfigDiffList"></ul>
-        <button id="oscsResetConfigBtn" class="btn-secondary">Replace with shipped config</button>
-        <span class="oscs-hint">Your current copy is saved as a backup first.</span>
-      </div>
+      <div id="oscsConfigDiffNote" class="oscs-msg bad" hidden>Your config differs from the one shipped with this version of the app. Check the differences under <button class="linklike" data-goto-tab="tools">Rebuild config on the Indexing Tools tab</button> before a full run.</div>
 
       <div class="oscs-row">
         <select id="oscsMode" aria-label="Run type">
-          <option value="full">Full run: every index, then the ACL jobs</option>
+          <option value="full">Full run: every index, then the ACL and Recruiting jobs</option>
           <option value="single">Test one step</option>
           <option value="resume">Resume a stopped run</option>
         </select>
@@ -695,18 +714,74 @@
         <input type="text" id="oscsConfirm" placeholder="Type the instance name to confirm" autocomplete="off" />
         <span class="oscs-hint" id="oscsConfirmHint"></span>
       </div>
+      <div id="oscsSlackNote" class="oscs-msg oscs-slack-note" hidden>No Slack webhook is saved on this computer, so alerts only show in the app and the team won't hear about a failed run. <button class="linklike" data-goto-tab="tools" data-goto="oscsSlackSection">Set up Slack alerts</button> on the Indexing Tools tab before your first real run. It's a one-time step.</div>
+      <div class="oscs-row">
+        <label class="oscs-check"><input type="checkbox" id="oscsSlackOn" checked /> Post alerts to Slack for this run</label>
+        <span class="oscs-hint">Turn off while testing so the channel only gets real runs. Alerts still show in the app.</span>
+      </div>
       <div class="oscs-row">
         <button id="oscsStartBtn"><span class="spinner"></span><span class="btn-label">Start</span></button>
         <button id="oscsStopBtn" class="btn-secondary" disabled>Stop after current step</button>
-        <button id="oscsOpenConfigBtn" class="btn-secondary">Edit config</button>
-        <button id="oscsReloadBtn" class="btn-secondary">Reload config</button>
         <button id="oscsRunsBtn" class="btn-secondary">Run records</button>
       </div>
       <div id="oscsStartMsg" class="oscs-msg"></div>
 
       <div id="oscsProgress"></div>
+    </div>
 
-      <p class="oscs-sub">Slack alerts (#team-admin-services-private)</p>
+    <div class="tab-panel oscs" role="tabpanel" id="panel-tools" aria-labelledby="tab-tools" hidden>
+      <p class="section-label">Indexing Tools</p>
+      <p class="oscs-hint oscs-steps-note">Everything here is read-only in Oracle and works on any instance, including Production. Run the rebuild itself from the Run Index Jobs tab.</p>
+
+      <p class="oscs-sub">Check index list (after the Production quarterly update)</p>
+      <p class="oscs-hint oscs-steps-note">Choose Production at the top, then click Check index list. The app finds Oracle's latest reindex request (FndOSCSReindexJob, submitted by FAADMIN), reads the list of indexes in its log and compares it with the rebuild's step list and exclusion list.</p>
+      <div class="oscs-row">
+        <button id="oscsCheckIndexBtn" class="btn-secondary"><span class="spinner"></span><span class="btn-label">Check index list</span></button>
+      </div>
+      <div id="oscsCheckIndexOut"></div>
+
+      <p class="oscs-sub">Inspect a request</p>
+      <p class="oscs-hint oscs-steps-note">Enter an Oracle scheduled process request ID to see its status, parameters and log without changing anything. Use it to find out why a rebuild step stopped, or to read the parameters a past run used, including on Production. It shows the start and end of long logs, and each box has a Copy button.</p>
+      <div class="oscs-row">
+        <input type="text" id="oscsInspectId" placeholder="Request ID, e.g. 11288959" />
+        <button id="oscsInspectBtn" class="btn-secondary">Inspect</button>
+      </div>
+      <p class="oscs-hint oscs-steps-note">Don't know the request ID? <strong>Find latest</strong> finds the newest request for a job and inspects it for you. Choose the reindex job to check that Oracle's own reindex ran after a quarterly update and read its log. Choose the index ingest job to see the most recent single-index ingest, for example one someone ran by hand outside the app.</p>
+      <div class="oscs-row">
+        <select id="oscsFindJob" aria-label="Job to find">
+          <option value="FndOSCSReindexJob">Latest reindex job (FndOSCSReindexJob)</option>
+          <option value="FndOSCSIndexIngestJob">Latest index ingest job (FndOSCSIndexIngestJob)</option>
+        </select>
+        <button id="oscsFindBtn" class="btn-secondary"><span class="spinner"></span><span class="btn-label">Find latest</span></button>
+      </div>
+      <div id="oscsFindOut"></div>
+      <div id="oscsInspectOut"></div>
+
+      <p class="oscs-sub">Rebuild config</p>
+      <div id="oscsToolsConfigMsg" class="oscs-msg"></div>
+      <div id="oscsConfigDiff" class="oscs-diff" hidden>
+        <p><strong>Your config differs from the one shipped with this version of the app.</strong> Your copy is what the app uses. If you didn't change it on purpose, replace it so you get the latest step list and job settings.</p>
+        <ul id="oscsConfigDiffList"></ul>
+        <p>If your changes should apply to everyone's future runs, email them to T&amp;I. The email lists each change with its reason and test results. Your config is saved to Downloads for you to attach.</p>
+        <div class="oscs-row">
+          <button id="oscsRequestChangeBtn" class="btn-secondary">Email this change to T&amp;I</button>
+          <button id="oscsResetConfigBtn" class="btn-secondary">Replace with shipped config</button>
+          <span class="oscs-hint">Replacing saves your current copy as a backup first. Don't replace it until your change is released.</span>
+        </div>
+        <div id="oscsRequestChangeMsg" class="oscs-msg"></div>
+      </div>
+      <div class="oscs-row">
+        <button id="oscsOpenConfigBtn" class="btn-secondary">Edit config</button>
+        <button id="oscsReloadBtn" class="btn-secondary">Reload config</button>
+      </div>
+
+      <div id="oscsSlackSection" class="oscs-slack">
+      <p class="oscs-sub">Slack alerts (#team-admin-services-private)<span class="oscs-slack-badge">Not set up on this computer</span></p>
+      <ol class="oscs-steps oscs-hint">
+        <li>In 1Password, open <strong>Slack webhook – Search Index Rebuild alerts</strong> and copy its <strong>credential</strong> (a URL starting with https://hooks.slack.com/services/). If you can't see that item, ask for access to it.</li>
+        <li>Paste it below and click <strong>Save</strong>, then <strong>Send test</strong> and check that the message arrives in #team-admin-services-private.</li>
+      </ol>
+      <p class="oscs-hint oscs-steps-note">Do this once on each computer you run rebuilds from. The URL is saved encrypted on this computer and stays through app updates. Don't paste it in chat, email or tickets.</p>
       <div class="oscs-row">
         <input type="password" id="oscsSlackUrl" placeholder="Slack incoming webhook URL" autocomplete="off" />
         <button id="oscsSlackSaveBtn" class="btn-secondary">Save</button>
@@ -714,13 +789,7 @@
         <button id="oscsSlackClearBtn" class="btn-secondary">Remove</button>
       </div>
       <div id="oscsSlackMsg" class="oscs-msg oscs-hint"></div>
-
-      <p class="oscs-sub">Inspect a request (read-only; works on any instance)</p>
-      <div class="oscs-row">
-        <input type="text" id="oscsInspectId" placeholder="Request ID, e.g. 11288959" />
-        <button id="oscsInspectBtn" class="btn-secondary">Inspect</button>
       </div>
-      <div id="oscsInspectOut"></div>
     </div>
 
     <p class="note">Credentials are never stored. All requests are made securely via the desktop app — no browser CORS restrictions.<br><span id="appVersion" style="opacity:0.6"></span><br><span id="feedbackLink" style="opacity:0.85; font-size:0.85em; cursor:pointer;">Suggestions or bug reports? <u>Email jedonovan@davidson.edu</u></span></p>

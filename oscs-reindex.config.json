@@ -3,12 +3,15 @@
     "Config for the Search Index Rebuild feature (see OSCS_REINDEX_FEATURE.md).",
     "Edit steps to add, remove or reorder indexes. Never leave an index name blank: a blank name rebuilds every index, and the app refuses to submit it.",
     "Steps with \"verify\": true warn (and stop) if they ingest 0 rows. If one fails or loads 0 rows during testing, remove it.",
-    "Leave out (Oracle-managed or not used at Davidson): fnd-attachments, fa-crm-productcatalog, fa-scm-rcv-aprcpt, fa-scm-msc-lead-time-orders, fa-scm-msc-lead-time-insights, fa-psc-apo-parcel. Removed after testing: fa-prc-poi (0 rows on dev1, request 10534408, 11/25/2026), fnd-worklist-approvals (0 rows on dev1, request 10534443, 11/25/2026), fnd-ao-tasks-and-places (0 rows on dev1, request 10534445, 11/25/2026), fnd-ao-tasks-and-places-sandbox (0 rows on dev1, request 10534446, 11/25/2026).",
+    "\"exclusions\" lists indexes in Production that we deliberately don't rebuild, with the reason. Check index list shows them as Excluded on purpose instead of New in Oracle. Use \"index\" for one name or \"prefix\" for a group.",
+    "Not included: Index Job Summary for Each Requisition (Recruiting; needed only for Career Coach and Smart Search). On dev1 on 11/26/2026 (request 10536532) it went straight to Retrying, so it fails without those features. Add it after the Recruiting jobs if Davidson starts using either: api ess, packagePath /oracle/apps/ess/hcm/recruiting/sourcing/core, jobName IndexJobSummaryVectors, application EarHcmEss, argument 1 = FULL.",
+    "\"indexCheck\" says how Check index list finds Oracle's reindex request: the job name, who submits it, and how many days back to search.",
     "Each job picks an API: \"erp\" = /fscmRestApi/.../erpintegrations submitESSJobRequest; \"ess\" = /ess/rest/scheduler/v1/requests (needs \"application\").",
     "args are passed in order (submit.argument1, 2, ...). \"{index}\" is replaced with the step index name. Values marked _verify need confirming in a non-Prod instance; use Inspect request on a past successful request to read its parameters.",
     "\"extraParameters\" (ess only) adds named request parameters, e.g. {\"name\": \"SYS_effectiveApplication\", \"value\": \"EarHcmEss\"}.",
     "An argument with \"omit\": true is deliberately not passed (ERP: empty slot; ESS: that submit.argumentN is left out). Not allowed for the ingest job.",
-    "\"stopOnRetry\": true stops the run as soon as Oracle starts auto-retrying a failed request, instead of waiting for the retries or the time limit."
+    "\"stopOnRetry\": true stops the run as soon as Oracle starts auto-retrying a failed request, instead of waiting for the retries or the time limit.",
+    "\"counterCheck\" reads Oracle's progress counters (FA_EMCC_counter_1_total/processed/failed) after the job succeeds: minTotal catches a run that did nothing, maxFailed catches failed items. The Recruiting jobs can't run while Oracle's recurring Recruiting index process does; it isn't scheduled in non-Prod instances, so nothing needs cancelling."
   ],
   "prodHosts": [
     "fa-exci-saasfaprod1.fa.ocs.oraclecloud.com"
@@ -118,8 +121,147 @@
         "minCount": 1200,
         "expectedCount": 1380
       }
+    },
+    "recruitingGeography": {
+      "label": "Load and Index Master Geography Hierarchy (United States)",
+      "area": "Recruiting",
+      "api": "ess",
+      "packagePath": "/oracle/apps/ess/hcm/recruiting/common",
+      "jobName": "LoadIndexGeographySearchDocument",
+      "application": "EarHcmEss",
+      "_verify": "Submitted by the app on dev1 as request 10536591 (11/26/2026): Succeeded in about 3 min, 98,072 locations, 49,036 processed, 49,036 failed. Matches dev1 request 10387388 (9/29/2026: 49,053 processed, 49,019 failed), so about half failing is this job's normal pattern. Oracle keeps no log for it. Oracle's Recruiting docs say it creates and fills fa-hcm-irc-geohierarchies itself and runs before Load and Index Job Requisitions and Candidates.",
+      "args": [
+        {
+          "value": "US",
+          "note": "Country = United States (submit.argument1)"
+        },
+        {
+          "omit": true,
+          "note": "Level 2: left blank (submit.argument2)"
+        }
+      ],
+      "extraParameters": [],
+      "timeoutMinutes": 30,
+      "requireLogCheck": false,
+      "logCheck": {
+        "type": "none"
+      },
+      "counterCheck": {
+        "minTotal": 1,
+        "_note": "No failure limit: about half the locations fail on every run (see _verify). Rows shows the processed count."
+      }
+    },
+    "recruitingRequisitions": {
+      "label": "Load and Index Job Requisitions (Drop and Recreate Index)",
+      "area": "Recruiting",
+      "packagePath": "/oracle/apps/ess/hcm/recruiting/hiring/requisitions/core",
+      "jobName": "LoadIndexReqsSearchDocument",
+      "_verify": "Submitted by the app on dev1 as request 10536632 (11/26/2026): FULL (Drop and Recreate Index), Succeeded in 14 s, 100 of 100 requisitions, 0 failed. Same result from Oracle's screens in request 10536553. UPGRADE (Upgrade Current Index) does nothing after a refresh: request 10387396 logged 'Job failed. Reason: Re-ingestion not applicable' with 0 requisitions but still said Succeeded.",
+      "args": [
+        {
+          "value": "FULL",
+          "note": "Indexing Mode = Drop and Recreate Index (submit.argument1). Not UPGRADE: that mode does nothing after a refresh."
+        }
+      ],
+      "timeoutMinutes": 30,
+      "api": "ess",
+      "application": "EarHcmEss",
+      "extraParameters": [],
+      "requireLogCheck": false,
+      "logCheck": {
+        "type": "count",
+        "requiredPatterns": [],
+        "errorPattern": "Job failed"
+      },
+      "counterCheck": {
+        "minTotal": 1,
+        "maxFailed": 0
+      }
+    },
+    "recruitingCandidates": {
+      "label": "Load and Index Candidates (Drop and Recreate Index)",
+      "area": "Recruiting",
+      "packagePath": "/oracle/apps/ess/hcm/recruiting/sourcing/core",
+      "jobName": "LoadSearchDocuments",
+      "_verify": "Submitted by the app on dev1 as request 10536634 (11/26/2026): FULL (Drop and Recreate Index) with N, Succeeded in about 2.5 min, 27,343 candidates, 0 failed. From Oracle's screens, request 10536561 gave the same total. It shows Paused while its child requests run; the app keeps waiting.",
+      "args": [
+        {
+          "value": "FULL",
+          "note": "Indexing Mode = Drop and Recreate Index (submit.argument1)"
+        },
+        {
+          "value": "N",
+          "note": "Process only candidates in the queue = N (submit.argument2)"
+        }
+      ],
+      "timeoutMinutes": 30,
+      "api": "ess",
+      "application": "EarHcmEss",
+      "extraParameters": [],
+      "requireLogCheck": false,
+      "logCheck": {
+        "type": "count",
+        "requiredPatterns": [],
+        "errorPattern": "Job failed",
+        "countPattern": "Total records to process:\\s*(\\d[\\d,]*)",
+        "minCount": 1,
+        "_note": "Log from dev1 request 10536561 has one line: 'Total records to process: 27343 Total number of threads: 10'."
+      },
+      "counterCheck": {
+        "minTotal": 1,
+        "maxFailed": 0,
+        "rowsFrom": "total",
+        "_note": "The parent hands the work to child requests, so its processed counter is only a partial snapshot (0 in request 10536561, 11,250 in request 10536634, both with 27,343 total, 0 failed and every child Succeeded). Rows shows the total instead; a total of 0 or any failures still stop the run."
+      }
     }
   },
+  "indexCheck": {
+    "jobName": "FndOSCSReindexJob",
+    "submitter": "FAADMIN",
+    "days": 120
+  },
+  "exclusions": [
+    {
+      "index": "fnd-attachments",
+      "reason": "Has its own recurring job (Ingesting attachments to OSCS)"
+    },
+    {
+      "index": "fa-crm-productcatalog",
+      "reason": "CX/Sales, not used"
+    },
+    {
+      "index": "fa-scm-rcv-aprcpt",
+      "reason": "SCM receiving, not used"
+    },
+    {
+      "index": "fa-scm-msc-lead-time-orders",
+      "reason": "Supply Chain Planning. Oracle says to rerun the plans instead of ingesting"
+    },
+    {
+      "index": "fa-scm-msc-lead-time-insights",
+      "reason": "Supply Chain Planning. Oracle says to rerun the plans instead of ingesting"
+    },
+    {
+      "index": "fa-psc-apo-parcel",
+      "reason": "Not used"
+    },
+    {
+      "index": "fa-prc-poi",
+      "reason": "0 rows in dev1 (request 10534408, 11/25/2026)"
+    },
+    {
+      "index": "fnd-worklist-approvals",
+      "reason": "0 rows in dev1 (request 10534443, 11/25/2026). Dev1 data is masked and partial, so recheck after the next refresh: test the Redwood worklist search and the Ask Oracle bar, and move this into the steps if they come back empty"
+    },
+    {
+      "index": "fnd-ao-tasks-and-places",
+      "reason": "0 rows in dev1 (request 10534445, 11/25/2026). Dev1 data is masked and partial, so recheck after the next refresh: test the Ask Oracle bar, and move this into the steps if it comes back empty"
+    },
+    {
+      "index": "fnd-ao-tasks-and-places-sandbox",
+      "reason": "0 rows in dev1 (request 10534446, 11/25/2026). Dev1 data is masked and partial, so recheck after the next refresh: test the Ask Oracle bar, and move this into the steps if it comes back empty"
+    }
+  ],
   "steps": [
     {
       "index": "fa-hcm-acl",
@@ -154,6 +296,11 @@
     {
       "index": "fa-hcm-personprofile",
       "area": "HCM"
+    },
+    {
+      "index": "fa-hcm-contentitem",
+      "area": "HCM (Talent Profile)",
+      "notes": "Required for Redwood Item Catalogs since 26D (KB937810)"
     },
     {
       "index": "fa-hcm-modelprofile",
@@ -253,6 +400,9 @@
   ],
   "aclSteps": [
     "computeUsersAcl",
-    "learningAcl"
+    "learningAcl",
+    "recruitingGeography",
+    "recruitingRequisitions",
+    "recruitingCandidates"
   ]
 }

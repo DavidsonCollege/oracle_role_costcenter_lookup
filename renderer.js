@@ -530,18 +530,21 @@ async function oscsLoadConfig() {
   if (info.errors.length) lines.push(...info.errors);
   if (jobProblems.length) lines.push('Before a full run, finish these (a single-step test only needs its own job):', ...jobProblems.map(p => `• ${p}`));
   oscsMsg('oscsConfigMsg', lines.join('\n'), info.errors.length || jobProblems.length ? 'bad' : 'oscs-hint');
+  oscsMsg('oscsToolsConfigMsg', lines.join('\n'), info.errors.length || jobProblems.length ? 'bad' : 'oscs-hint');
 
   const hint = document.getElementById('oscsConfirmHint');
   hint.textContent = info.instance?.ok
     ? `Type "${info.instance.name}" to confirm this instance.`
     : (info.instance?.error ?? '');
 
+  oscsSetSlackState(info.slackConfigured);
   oscsMsg('oscsSlackMsg', info.slackConfigured
     ? 'A Slack webhook is saved (encrypted on this computer).'
-    : 'No Slack webhook saved. Alerts will only show in the app.', 'oscs-hint');
+    : 'No Slack webhook saved. Alerts will only show in the app until you add it (steps above).', info.slackConfigured ? 'oscs-hint' : 'bad');
 
   const diffBox = document.getElementById('oscsConfigDiff');
   diffBox.hidden = !info.differences;
+  document.getElementById('oscsConfigDiffNote').hidden = !info.differences;
   document.getElementById('oscsConfigDiffList').innerHTML = (info.differences ?? []).map(d => `<li>${esc(d)}</li>`).join('');
 
   if (info.running) oscsRender(info.running);
@@ -572,6 +575,8 @@ function oscsModeChanged() {
   document.getElementById('oscsStep').style.display     = mode === 'single' ? '' : 'none';
   document.getElementById('oscsRun').style.display      = mode === 'resume' ? '' : 'none';
   document.getElementById('oscsFromStep').style.display = mode === 'resume' ? '' : 'none';
+  // Tests are usually noise for the channel, so Slack starts off for them.
+  document.getElementById('oscsSlackOn').checked = mode !== 'single';
 }
 
 async function oscsStart() {
@@ -584,11 +589,16 @@ async function oscsStart() {
     stepId     : document.getElementById('oscsStep').value,
     runId      : document.getElementById('oscsRun').value,
     fromStepId : document.getElementById('oscsFromStep').value,
+    slack      : document.getElementById('oscsSlackOn').checked,
   };
+
+  // A real run without a webhook means nobody outside the app hears about a failure.
+  if (mode !== 'single' && params.slack && oscs.slackConfigured === false &&
+      !confirm('No Slack webhook is saved on this computer, so the team won\'t get alerts from this run. Start anyway?\n\nTo set it up first, click Cancel, then Set up Slack alerts.')) return;
 
   // Guardrail 5 exception: a single ACL job is allowed only as a deliberate test.
   if (mode === 'single' && params.stepId.startsWith('acl:') &&
-      !confirm('Submit this ACL job on its own? Normally ACL jobs run only after every ingest step succeeds.')) return;
+      !confirm('Submit this job on its own? Normally the jobs after the indexes run only after every index step succeeds.')) return;
 
   const btn = document.getElementById('oscsStartBtn');
   btn.disabled = true;
@@ -698,10 +708,200 @@ document.getElementById('oscsInspectOut').addEventListener('click', async e => {
   setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
 });
 
+// Diagnostics shown under Find latest / Check index list, so a failed search
+// on a new Oracle release can be pasted back for a fix.
+function oscsNotesHtml(r) {
+  const lines = [...(r.notes ?? []), ...(r.tried?.length ? ['Logs checked:', ...r.tried] : [])];
+  if (!lines.length) return '';
+  return `<details class="oscs-details"><summary>How the app searched${r.method ? ` (used: ${esc(r.method)})` : ''}</summary><pre>${esc(lines.join('\n'))}</pre></details>`;
+}
+
+// Live progress for the read-only searches: whichever search is running owns
+// this element. Searches run one at a time from the UI.
+let oscsSearchStatusEl = null;
+window.hcmAPI.onOscsSearchProgress(p => {
+  if (oscsSearchStatusEl) {
+    oscsSearchStatusEl.textContent = `Searching Oracle (${p.label})… ${p.searched.toLocaleString()} requests checked, ${p.matches} match${p.matches === 1 ? '' : 'es'} so far. Stops after about 2½ minutes.`;
+  }
+});
+function oscsSearching(el, text) {
+  el.innerHTML = `<p class="oscs-hint">${esc(text)}</p>`;
+  oscsSearchStatusEl = el.firstElementChild;
+}
+
+async function oscsFindLatest() {
+  const out = document.getElementById('oscsFindOut');
+  const btn = document.getElementById('oscsFindBtn');
+  const jobName = document.getElementById('oscsFindJob').value;
+  btn.disabled = true; btn.classList.add('loading');
+  oscsSearching(out, 'Searching Oracle for recent requests…');
+  try {
+    const r = await window.hcmAPI.oscsFindRequests({ ...oscsCreds(), jobName });
+    if (!r.ok) { out.innerHTML = `<p class="oscs-msg bad">${esc(r.error)}</p>${oscsNotesHtml(r)}`; return; }
+    const rows = r.requests.slice(0, 8).map(q => `<li><button class="linklike" data-inspect="${esc(q.requestId)}">${esc(q.requestId)}</button>
+      ${esc(q.state)}${q.submitted ? `, ${esc(new Date(q.submitted).toLocaleString())}` : ''}${q.submitter ? `, ${esc(q.submitter)}` : ''}</li>`).join('');
+    out.innerHTML = `<p class="oscs-hint">Recent ${esc(jobName)} requests, newest first. ${r.latest ? `Inspecting ${esc(r.latest.requestId)}, the newest one that finished (Succeeded, Warning or Error).` : 'None of them has finished yet.'} Click another number to inspect it.</p>
+      <ul class="oscs-check-list">${rows}</ul>${oscsNotesHtml(r)}`;
+    if (r.latest) {
+      document.getElementById('oscsInspectId').value = r.latest.requestId;
+      oscsInspect();
+    }
+  } finally {
+    oscsSearchStatusEl = null;
+    btn.disabled = false; btn.classList.remove('loading');
+  }
+}
+
+async function oscsCheckIndexList() {
+  const out = document.getElementById('oscsCheckIndexOut');
+  const btn = document.getElementById('oscsCheckIndexBtn');
+  btn.disabled = true; btn.classList.add('loading');
+  oscsSearching(out, 'Finding the latest reindex request…');
+  try {
+    const r = await window.hcmAPI.oscsCheckIndexList(oscsCreds());
+    const prodWarn = r.host && !r.isProd
+      ? `<p class="oscs-msg bad">This is ${esc(r.host)}, not Production. Compare against Production's list: test environments can have extra indexes left over from testing.</p>` : '';
+    if (!r.ok) { out.innerHTML = `${prodWarn}<p class="oscs-msg bad">${esc(r.error)}</p>${oscsNotesHtml(r)}`; return; }
+    const list = items => (items.length ? `<ul class="oscs-check-list">${items.join('')}</ul>` : '<p class="oscs-hint">None.</p>');
+    const logDate = r.request.submitted ? new Date(r.request.submitted).toLocaleDateString() : null;
+    const staleWarn = r.ageDays == null
+      ? '<p class="oscs-msg bad">Oracle didn\'t say when this request ran. Check its date with Inspect before relying on this list.</p>'
+      : r.ageDays > 7
+        ? `<p class="oscs-msg bad">This log is ${r.ageDays} days old. If the quarterly update ran since then, Oracle's newer reindex request wasn't found. Open "How the app searched" below and send it to the app's owner.</p>` : '';
+    const exclWarn = r.noExclusions
+      ? '<p class="oscs-msg bad">Your config has no exclusion list, so indexes we skip on purpose show as New in Oracle. Click Replace with shipped config at the top of this tab, then check again.</p>' : '';
+    out.innerHTML = `${prodWarn}${exclWarn}
+      <div class="oscs-diff"><strong>Log from request ${esc(r.request.requestId)}, submitted ${esc(logDate ?? 'on an unknown date')}</strong>${r.ageDays != null ? ` (${r.ageDays} day${r.ageDays === 1 ? '' : 's'} ago)` : ''}.
+      ${r.oracleCount} indexes in this log; ${r.matched} match the rebuild's step list.</div>${staleWarn}
+      <p class="oscs-sub">New in Oracle (${r.newInOracle.length})</p>
+      ${r.newInOracle.length ? '<p class="oscs-hint">Not in the step list or the exclusion list. Add each one to the steps (test it first) or to the exclusions with a reason.</p>' : ''}
+      ${list(r.newInOracle.map(n => `<li data-index="${esc(n)}">${esc(n)}
+        <button class="linklike" data-whocreated="${esc(n)}">Who created it?</button> ·
+        <button class="linklike" data-cfg="add">Add to rebuild</button> ·
+        <button class="linklike" data-cfg="skip">Skip</button>
+        <div class="oscs-cfgform"></div><div class="oscs-who"></div></li>`))}
+      <p class="oscs-sub">Missing from Oracle (${r.missingFromOracle.length})</p>
+      ${r.missingFromOracle.length ? `<p class="oscs-hint">In the step list but not in this log. If an index was created after ${esc(logDate ?? 'this log')}, it won't be listed until the next reindex run; check again then. Otherwise, check whether Oracle removed or renamed it.</p>` : ''}
+      ${list(r.missingFromOracle.map(n => `<li data-index="${esc(n)}">${esc(n)}
+        <button class="linklike" data-cfg="remove">Remove from rebuild</button>
+        <div class="oscs-cfgform"></div></li>`))}
+      <p class="oscs-sub">Excluded on purpose (${r.excluded.length})</p>
+      ${list(r.excluded.map(x => `<li>${esc(x.index)}${x.reason ? ` <span class="oscs-hint">– ${esc(x.reason)}</span>` : ''}</li>`))}
+      ${oscsNotesHtml(r)}`;
+  } finally {
+    oscsSearchStatusEl = null;
+    btn.disabled = false; btn.classList.remove('loading');
+  }
+}
+
+// Add / Skip / Remove from the Check index list results: small forms that
+// change the personal config copy, then reload it.
+function oscsDefaultAfter(index) {
+  // Next to related indexes: after the last step sharing the same prefix (fa-hcm-, fa-prc-, fnd-...).
+  const prefix = index.split('-').slice(0, index.startsWith('fnd-') ? 1 : 2).join('-') + '-';
+  const ingest = (oscs.steps ?? []).filter(s => s.kind === 'ingest');
+  const same = ingest.filter(s => s.index.startsWith(prefix));
+  return (same.at(-1) ?? ingest.at(-1))?.index ?? '';
+}
+
+document.getElementById('oscsCheckIndexOut').addEventListener('click', async e => {
+  const b = e.target.closest('[data-cfg], [data-cfgsave], [data-cfgcancel]');
+  if (!b) return;
+  const li = b.closest('li[data-index]');
+  const index = li.dataset.index;
+  const form = li.querySelector('.oscs-cfgform');
+  if (b.dataset.cfgcancel != null) { form.innerHTML = ''; return; }
+
+  if (b.dataset.cfg === 'add') {
+    const after = oscsDefaultAfter(index);
+    const opts = (oscs.steps ?? []).filter(s => s.kind === 'ingest')
+      .map(s => `<option value="${esc(s.index)}"${s.index === after ? ' selected' : ''}>after ${esc(s.index)}</option>`).join('');
+    form.innerHTML = `<div class="oscs-row">
+        <select data-f="after" aria-label="Position">${opts}</select>
+        <input type="text" data-f="area" placeholder="Area, e.g. HCM" />
+        <input type="text" data-f="notes" placeholder="Why it's needed, e.g. Required for Item Catalogs (KB937810)" />
+        <button class="btn-secondary" data-cfgsave="addStep">Add</button>
+        <button class="btn-secondary" data-cfgcancel>Cancel</button></div>`;
+    return;
+  }
+  if (b.dataset.cfg === 'skip') {
+    form.innerHTML = `<div class="oscs-row">
+        <input type="text" data-f="reason" placeholder="Reason, e.g. Not used at Davidson" />
+        <button class="btn-secondary" data-cfgsave="addExclusion">Skip it</button>
+        <button class="btn-secondary" data-cfgcancel>Cancel</button></div>`;
+    return;
+  }
+  if (b.dataset.cfg === 'remove') {
+    form.innerHTML = `<div class="oscs-row"><span class="oscs-hint">Remove ${esc(index)} from the rebuild?</span>
+        <button class="btn-secondary" data-cfgsave="removeStep">Remove</button>
+        <button class="btn-secondary" data-cfgcancel>Cancel</button></div>`;
+    return;
+  }
+
+  const val = f => form.querySelector(`[data-f="${f}"]`)?.value ?? '';
+  const r = await window.hcmAPI.oscsEditConfig({
+    action: b.dataset.cfgsave, index, after: val('after'), area: val('area'), notes: val('notes'), reason: val('reason'),
+  });
+  if (!r.ok) {
+    form.insertAdjacentHTML('beforeend', `<p class="oscs-msg bad">${esc(r.error)}</p>`);
+    return;
+  }
+  li.querySelectorAll('[data-cfg]').forEach(x => { x.disabled = true; });
+  const next = b.dataset.cfgsave === 'addStep'
+    ? ' To test it, choose a test environment at the top, then Test one step on the Run Index Jobs tab.' : '';
+  // After adding, a failed test can still turn it into a skip from here.
+  const skipInstead = b.dataset.cfgsave === 'addStep' ? ' <button class="linklike" data-cfg="skip">Skip it instead</button>' : '';
+  form.innerHTML = `<p class="oscs-msg good">${esc(r.message)} Saved in your config.${esc(next)} To make it permanent for everyone, send the change to the app owner.${skipInstead}</p>`;
+  await oscsLoadConfig();
+});
+
+// Ingest requests (any submitter) that name this index, newest first.
+document.getElementById('oscsCheckIndexOut').addEventListener('click', async e => {
+  const insp = e.target.closest('[data-inspect]');
+  if (insp) {
+    document.getElementById('oscsInspectId').value = insp.dataset.inspect;
+    oscsInspect();
+    document.getElementById('oscsInspectId').scrollIntoView({ block: 'center' });
+    return;
+  }
+  const b = e.target.closest('[data-whocreated]');
+  if (!b) return;
+  const out = b.parentElement.querySelector('.oscs-who');
+  oscsSearching(out, 'Searching index ingest requests…');
+  b.disabled = true;
+  try {
+    const r = await window.hcmAPI.oscsFindIndexRequests({ ...oscsCreds(), index: b.dataset.whocreated });
+    if (!r.ok) { out.innerHTML = `<p class="oscs-msg bad">${esc(r.error)}</p>${oscsNotesHtml(r)}`; return; }
+    out.innerHTML = `<p class="oscs-hint">Ingest requests for this index, newest first. The oldest is usually the one that created it. Click a number to inspect it.</p>
+      <ul class="oscs-check-list">${r.requests.slice(0, 10).map(q => `<li><button class="linklike" data-inspect="${esc(q.requestId)}">${esc(q.requestId)}</button>
+        ${esc(q.state)}${q.submitted ? `, ${esc(new Date(q.submitted).toLocaleString())}` : ''}${q.submitter ? `, submitted by ${esc(q.submitter)}` : ''}</li>`).join('')}</ul>${oscsNotesHtml(r)}`;
+  } finally {
+    oscsSearchStatusEl = null;
+    b.disabled = false;
+  }
+});
+
+document.getElementById('oscsFindBtn').addEventListener('click', oscsFindLatest);
+document.getElementById('oscsCheckIndexBtn').addEventListener('click', oscsCheckIndexList);
+document.getElementById('oscsFindOut').addEventListener('click', e => {
+  const b = e.target.closest('[data-inspect]');
+  if (!b) return;
+  document.getElementById('oscsInspectId').value = b.dataset.inspect;
+  oscsInspect();
+});
+
+// Highlights the Slack setup and shows a note on Run Index Jobs until a webhook is saved.
+function oscsSetSlackState(configured) {
+  oscs.slackConfigured = configured;
+  document.getElementById('oscsSlackSection').classList.toggle('needs-setup', !configured);
+  document.getElementById('oscsSlackNote').hidden = configured;
+}
+
 async function oscsSaveSlack(url) {
   const r = await window.hcmAPI.oscsSetSlack({ url });
   if (!r.ok) return oscsMsg('oscsSlackMsg', r.error, 'bad');
   document.getElementById('oscsSlackUrl').value = '';
+  oscsSetSlackState(r.configured);
   oscsMsg('oscsSlackMsg', r.configured ? 'Slack webhook saved (encrypted on this computer).' : 'Slack webhook removed.', 'good');
 }
 
@@ -714,7 +914,7 @@ document.getElementById('oscsStopBtn').addEventListener('click', async () => {
 });
 document.getElementById('oscsOpenConfigBtn').addEventListener('click', async () => {
   const r = await window.hcmAPI.oscsOpenConfig();
-  if (!r.ok) oscsMsg('oscsConfigMsg', r.error, 'bad');
+  if (!r.ok) oscsMsg('oscsToolsConfigMsg', r.error, 'bad');
   else oscsLoadConfig();
 });
 document.getElementById('oscsReloadBtn').addEventListener('click', oscsLoadConfig);
@@ -722,8 +922,16 @@ document.getElementById('oscsResetConfigBtn').addEventListener('click', async ()
   if (!confirm('Replace your config with the shipped one? Your current copy will be saved as a backup.')) return;
   const r = await window.hcmAPI.oscsResetConfig();
   await oscsLoadConfig();
-  if (!r.ok) oscsMsg('oscsConfigMsg', r.error, 'bad');
-  else if (r.backup) oscsMsg('oscsConfigMsg', `Config replaced. Your old copy was saved as ${r.backup}`, 'good');
+  if (!r.ok) oscsMsg('oscsToolsConfigMsg', r.error, 'bad');
+  else if (r.backup) oscsMsg('oscsToolsConfigMsg', `Config replaced. Your old copy was saved as ${r.backup}`, 'good');
+});
+document.getElementById('oscsRequestChangeBtn').addEventListener('click', async () => {
+  const r = await window.hcmAPI.oscsRequestConfigChange();
+  if (!r.ok) return oscsMsg('oscsRequestChangeMsg', r.error, 'bad');
+  const name = r.file.split(/[\\/]/).pop();
+  oscsMsg('oscsRequestChangeMsg', r.truncated
+    ? `Your email app is open. The request was too long for an email link, so paste it from your clipboard into the email, then attach ${name} from your Downloads folder and send it.`
+    : `Your email app is open with the request. Attach ${name} from your Downloads folder (it's shown in a window) and send it. The full text is also on your clipboard.`, 'good');
 });
 document.getElementById('oscsRunsBtn').addEventListener('click', () => window.hcmAPI.oscsOpenRunsFolder());
 document.getElementById('oscsInspectBtn').addEventListener('click', oscsInspect);
@@ -736,7 +944,7 @@ document.getElementById('oscsSlackTestBtn').addEventListener('click', async () =
 });
 // The confirmation hint depends on the selected environment.
 document.getElementById('baseUrl').addEventListener('change', () => {
-  if (activeTab === 'scheduled') oscsLoadConfig();
+  if (activeTab !== 'lookups') oscsLoadConfig();
 });
 window.hcmAPI.onOscsProgress(run => {
   oscsRender(run);
@@ -759,7 +967,7 @@ function showTab(name) {
     t.tabIndex = on ? 0 : -1;
     document.getElementById(t.getAttribute('aria-controls')).hidden = !on;
   });
-  if (name === 'scheduled') oscsLoadConfig();
+  if (name !== 'lookups') oscsLoadConfig();
   try { localStorage.setItem('activeTab', name); } catch { /* storage unavailable */ }
 }
 
@@ -775,6 +983,23 @@ document.querySelectorAll('.tabs .tab').forEach(t => {
   });
 });
 
+// Links that open another tab, e.g. from the rebuild to the config on Indexing Tools.
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-goto-tab]');
+  if (!b) return;
+  showTab(b.dataset.gotoTab);
+  const target = b.dataset.goto && document.getElementById(b.dataset.goto);
+  if (target) {
+    target.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    target.querySelector('input')?.focus({ preventScroll: true });
+  }
+});
+
+
+let restoredTab = false;
 try {
-  if (localStorage.getItem('activeTab') === 'scheduled') showTab('scheduled');
+  const saved = localStorage.getItem('activeTab');
+  if (saved === 'scheduled' || saved === 'tools') { showTab(saved); restoredTab = true; }
 } catch { /* storage unavailable */ }
+// Otherwise load the config anyway, so both rebuild tabs already show whether Slack is set up.
+if (!restoredTab) oscsLoadConfig();

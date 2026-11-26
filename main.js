@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, safeStorage } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, safeStorage, clipboard } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const fs   = require('fs');
@@ -186,6 +186,43 @@ ipcMain.handle('oscs:resetConfig', () => {
   }
 });
 
+ipcMain.handle('oscs:editConfig', (_event, change) => {
+  try {
+    return { ok: true, ...getReindexer().editUserConfig(change) };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
+// Saves a copy of the personal config to Downloads (mail links can't attach
+// files), shows it, copies the full request to the clipboard and opens an
+// email to T&I. The person attaches the file and sends it themselves.
+ipcMain.handle('oscs:requestConfigChange', async () => {
+  try {
+    const { buildChangeRequest } = require('./oscs-reindex');
+    const prep = getReindexer().prepareChangeRequest({ version: app.getVersion() });
+    const stamp = new Date().toISOString().slice(0, 10);
+    let file = path.join(app.getPath('downloads'), `oscs-reindex.config-${stamp}.json`);
+    for (let n = 2; fs.existsSync(file); n++) file = path.join(app.getPath('downloads'), `oscs-reindex.config-${stamp}-${n}.json`);
+    fs.writeFileSync(file, prep.configText, 'utf8');
+    const mail = buildChangeRequest({ ...prep, version: app.getVersion(), fileName: path.basename(file) });
+    clipboard.writeText(`To: ${mail.to}\nSubject: ${mail.subject}\n\n${mail.body}`);
+    // Windows limits mailto links to about 2,000 characters; Mac mail apps take
+    // much longer ones. Past the limit, fall back to a short body + clipboard.
+    const link = body => `mailto:${mail.to}?subject=${encodeURIComponent(mail.subject)}&body=${encodeURIComponent(body)}`;
+    let url = link(mail.body);
+    const truncated = url.length > (process.platform === 'win32' ? 2000 : 8000);
+    if (truncated) {
+      url = link(`Please assign this ticket to Admin Services.\n\n[The full request was copied to your clipboard. Select this line and paste over it.]\n\nAttach: ${path.basename(file)} (in your Downloads folder).`);
+    }
+    shell.showItemInFolder(file);
+    await shell.openExternal(url);
+    return { ok: true, file, truncated };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
 ipcMain.handle('oscs:openRunsFolder', async () => {
   const dir = getReindexer().runsDir;
   fs.mkdirSync(dir, { recursive: true });
@@ -202,6 +239,31 @@ ipcMain.handle('oscs:stop', () => getReindexer().stop());
 ipcMain.handle('oscs:inspect', async (_event, params) => {
   try {
     return await getReindexer().inspect(params);
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
+// Read-only searches: allowed on any instance, including Production.
+ipcMain.handle('oscs:findRequests', async (event, params) => {
+  try {
+    return await getReindexer().findRequests({ ...params, onPage: p => event.sender.send('oscs:searchProgress', p) });
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
+ipcMain.handle('oscs:checkIndexList', async (event, params) => {
+  try {
+    return await getReindexer().checkIndexList({ ...params, onPage: p => event.sender.send('oscs:searchProgress', p) });
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
+ipcMain.handle('oscs:findIndexRequests', async (event, params) => {
+  try {
+    return await getReindexer().findIndexRequests({ ...params, onPage: p => event.sender.send('oscs:searchProgress', p) });
   } catch (e) {
     return { ok: false, error: e.message };
   }

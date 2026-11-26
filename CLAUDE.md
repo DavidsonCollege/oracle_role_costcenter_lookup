@@ -14,6 +14,7 @@ Electron desktop app (Mac + Windows) that queries Oracle HCM Cloud via REST API 
 | `oscs-reindex.js` | Search index (OSCS) rebuild runner: Oracle ESS job submit/status/log, guardrails, log checks, run records, Slack alerts. No Electron imports, so `test/smoke.js` tests it in plain Node |
 | `oscs-reindex.config.json` | Default step list and job definitions for the rebuild; copied to userData on first "Edit config" and the copy wins after that. The tab warns when the copy differs from the shipped file (`summarizeConfigDiff`) and offers "Replace with shipped config", which backs up the old copy first |
 | `OSCS_REINDEX_FEATURE.md` | Spec for the rebuild feature, including the VERIFY list |
+| `UPDATING_THE_INDEX_LIST.md` | How to make a tested index-list change (add, skip, remove) permanent: shipped config, test count, spec table, release, and what users do after |
 | `assets/` | App icons (`icon.icns` for Mac, `icon.ico` for Windows) |
 | `.github/workflows/build.yml` | GitHub Actions release pipeline (builds Mac + Windows in parallel) |
 | `.github/workflows/pr-check.yml` | Runs `npm test` (`test/smoke.js`) on every PR to main — syntax checks, packaged-file check, read-excel-file parse of `test/fixtures/report.xlsx`. Can't launch Electron or reach Oracle, so major updates still need a manual `npm start` test |
@@ -177,9 +178,10 @@ Used only by `oscs-reindex.js`. Each job in the config picks one with `"api"`.
 
 **ESS scheduler (`"ess"`)**: `{baseUrl}/ess/rest/scheduler/v1/requests`
 - Submit: `POST { jobDefinitionId: "JobDefinition://oracle/apps/.../JobName", application, requestParameters: [{ name: "submit.argument1", paramType: "STRING", value }] }` → `requestId` (falls back to `id` or the `Location` header)
+- Search: `GET /requests?q=...&fields=...&limit=&offset=` (`searchRequests`). Filter support isn't documented for our release, so `findRequests` tries a job filter, then a date-only filter, and always re-filters by job name and submitter itself. It returns its notes, which the UI shows under "How the app searched". Check index list (`checkIndexList`) reads the newest non-canceled FndOSCSReindexJob log that has an `Indices (created): [...]` line and compares it with `steps` and `exclusions` in the config. Both are read-only and allowed on Prod.
 - Status/details: `GET /requests/{id}` → `state` (name or numeric ESS state code; `normalizeStatus()` maps both) and `requestParameters`. The Inspect tool uses this to read parameter values from past requests.
 
-**Guardrails are enforced in the main process, not just the UI:** the host must match `nonProdHostPattern` and not be in `prodHosts`; the typed confirmation must equal the instance name from the host; ingest steps with a blank or invalid index name are never submitted; a full run refuses to start unless every job (including both ACL jobs) is complete in the config; ACL jobs run only after every ingest step in the run succeeded.
+**Guardrails are enforced in the main process, not just the UI:** the host must match `nonProdHostPattern` and not be in `prodHosts`; the typed confirmation must equal the instance name from the host; ingest steps with a blank or invalid index name are never submitted; a full run refuses to start unless every job in `aclSteps` is complete in the config; those jobs (Compute Users ACL, Learning ACL, then the three Recruiting Load and Index jobs) run only after every ingest step in the run succeeded. Jobs with `counterCheck` are checked against Oracle's `FA_EMCC_counter_1_*` request parameters after they succeed (`checkCounters`), because Recruiting's Upgrade Current Index mode reports Succeeded while doing nothing.
 
 Run records: `userData/oscs-runs/<runId>.json`, rewritten after every change. Slack webhook: encrypted with `safeStorage` (async API) in `userData/oscs-slack-webhook.bin`, never in settings.json.
 
@@ -462,8 +464,8 @@ SmartScreen shows an "unknown publisher" warning on install; users click More in
 - **403 on `/userAccounts`** now shows a clear message ("Connect to the Davidson network") instead of the raw API error.
 
 ### Search Index Rebuild (OSCS reindex after a P2T refresh)
-- "Search Index Rebuild" lives on the **Scheduled Processes** tab (credentials stay at the top; the original lookups are on the **Lookups** tab; the last-used tab is remembered in localStorage). Spec in `OSCS_REINDEX_FEATURE.md`. Runs as the signed-in user with the same Basic auth as the rest of the app.
+- "Search Index Rebuild" runs from the **Run Index Jobs** tab (`panel-scheduled`; ids kept from its old name, Scheduled Processes) (run controls and progress only). Check index list, Inspect, Find latest, the rebuild config (diff, Edit/Reload, Email to T&I) and Slack setup are on the **Indexing Tools** tab (`panel-tools`). Credentials stay at the top; the original lookups are on the **Lookups** tab; the last-used tab is remembered in localStorage. `oscsLoadConfig()` runs when either rebuild tab opens and fills both `oscsConfigMsg` and `oscsToolsConfigMsg`. Spec in `OSCS_REINDEX_FEATURE.md`. Runs as the signed-in user with the same Basic auth as the rest of the app.
 - Modes: full run, test one step, resume a stopped run (uses the current config's step list matched by step ID; skips steps that already succeeded in that run).
 - Stops on any non-SUCCEEDED status or failed log check (section 7a of the spec), retries "index is being used by other job(s)" 3 times 5 minutes apart, alerts in-app and to Slack.
 - "Stop after current step" never cancels the Oracle job; it stops submitting more. Closing the window during a run asks first.
-- IPC channels: `oscs:config`, `oscs:start`, `oscs:stop`, `oscs:listRuns`, `oscs:inspect`, `oscs:openConfig`, `oscs:openRunsFolder`, `oscs:setSlackWebhook`, `oscs:testSlack`; progress pushed on `oscs:progress`.
+- IPC channels: `oscs:config`, `oscs:start`, `oscs:stop`, `oscs:listRuns`, `oscs:inspect`, `oscs:findRequests`, `oscs:checkIndexList`, `oscs:openConfig`, `oscs:openRunsFolder`, `oscs:setSlackWebhook`, `oscs:testSlack`; progress pushed on `oscs:progress`.
