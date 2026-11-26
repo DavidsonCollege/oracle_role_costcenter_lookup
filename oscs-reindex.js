@@ -45,6 +45,9 @@ function isFinalStatus(s) {
   return /FAIL|CANCEL(?!LING)|^ERROR/.test(s) && s !== 'ERROR_AUTO_RETRY';
 }
 
+// States whose requests have a log worth reading.
+const hasLogState = s => s === 'SUCCEEDED' || s === 'WARNING' || s === 'ERROR';
+
 const isIndexBusy = text => /being used by other job/i.test(String(text ?? ''));
 
 // ── Config ────────────────────────────────────────────────────────────────────
@@ -86,7 +89,8 @@ function summarizeConfigDiff(user, shipped) {
   const jobKeys = [...new Set([...Object.keys(user.jobs ?? {}), ...Object.keys(shipped.jobs ?? {})])];
   const changedJobs = jobKeys.filter(k => JSON.stringify(user.jobs?.[k]) !== JSON.stringify(shipped.jobs?.[k]));
   if (changedJobs.length) diffs.push(`Job settings differ: ${changedJobs.join(', ')}`);
-  const rest = c => JSON.stringify({ ...c, _readme: null, steps: null, jobs: null });
+  if (JSON.stringify(user.exclusions ?? []) !== JSON.stringify(shipped.exclusions ?? [])) diffs.push('The exclusion list differs.');
+  const rest = c => JSON.stringify({ ...c, _readme: null, steps: null, jobs: null, exclusions: null });
   if (rest(user) !== rest(shipped)) diffs.push('Other settings differ (Prod hosts, polling, retries or ACL steps).');
   return diffs.length ? diffs : null;
 }
@@ -142,6 +146,12 @@ function validateConfig(config) {
     seen.add(name);
   });
 
+  if (config.exclusions != null && !Array.isArray(config.exclusions)) errors.push('"exclusions" must be a list.');
+  (Array.isArray(config.exclusions) ? config.exclusions : []).forEach((x, i) => {
+    if (!String(x?.index ?? x?.prefix ?? '').trim()) errors.push(`Exclusion ${i + 1} needs an "index" or "prefix".`);
+    else if (x.index && seen.has(x.index)) errors.push(`"${x.index}" is both a step and an exclusion.`);
+  });
+
   if (!Array.isArray(config.aclSteps)) errors.push('"aclSteps" must be a list of job keys.');
   const ingest = config.jobs?.ingest;
   if (ingest && Array.isArray(ingest.args) && !ingest.args.some(a => String(a?.value ?? '').includes('{index}'))) {
@@ -161,7 +171,7 @@ function planSteps(config) {
   }));
   const acl = config.aclSteps.map(key => ({
     id: `acl:${key}`, kind: 'acl', jobKey: key, index: null,
-    label: config.jobs?.[key]?.label ?? key, area: 'Search security', notes: '', verify: false,
+    label: config.jobs?.[key]?.label ?? key, area: config.jobs?.[key]?.area ?? 'Search security', notes: '', verify: false,
   }));
   return [...ingest, ...acl];
 }
@@ -382,6 +392,8 @@ function makeApi({ fetch, baseUrl, authHeader }) {
     + 'submitter,submissionTime,processStartTime,processEndTime,errorWarningMessage,requestParameters,'
     + 'previousState,retriedCount,executionAttempt';
 
+  const LIST_FIELDS = 'requestId,state,jobDefinitionId,jobDisplayName,submitter,submissionTime,processEndTime';
+
   async function essRequest(id, { detailed = false } = {}) {
     const url = `${base}${ESS_PATH}/${checkId(id)}`;
     if (detailed) {
@@ -428,13 +440,81 @@ function makeApi({ fetch, baseUrl, authHeader }) {
     return files.map(f => `===== ${f.name} =====\n${f.text}`).join('\n');
   }
 
+  // One page of the ESS request search. Oracle's filter support varies by
+  // release, so the caller checks what comes back rather than trusting q.
+  async function searchRequests({ q, limit = 200, offset = 0, orderBy = null }) {
+    const qs = new URLSearchParams({ fields: LIST_FIELDS, limit: String(limit), offset: String(offset) });
+    if (q) qs.set('q', q);
+    if (orderBy) qs.set('orderBy', orderBy);
+    const r = await call(`${base}${ESS_PATH}?${qs}`, { headers: headers() }, 60000);
+    if (!r.res.ok) throw httpError('Request search', r);
+    const items = r.json?.items ?? r.json?.requests ?? r.json?.value ?? (Array.isArray(r.json) ? r.json : []);
+    return { items: Array.isArray(items) ? items : [], hasMore: r.json?.hasMore === true, raw: r.json };
+  }
+
   return {
     submit: (job, args) => (job.api === 'ess' ? submitEss(job, args) : submitErp(job, args)),
-    status, log, essRequest, erpStatusRaw, retrySignal,
+    status, log, essRequest, erpStatusRaw, retrySignal, searchRequests,
   };
 }
 
 // ── Runner ────────────────────────────────────────────────────────────────────
+
+// ── Finding Oracle's own requests and checking the index list ────────────────
+
+const reqId   = it => String(it?.requestId ?? it?.id ?? '');
+const reqJob  = it => String(it?.jobDefinitionId ?? it?.jobDefinitionName ?? it?.jobDefinition ?? it?.name ?? '');
+const reqUser = it => (it?.submitter ?? it?.submittedBy ?? it?.userName ?? null);
+const reqTime = it => (it?.submissionTime ?? it?.submittedTime ?? null);
+
+// Pulls every index name out of "Indices (created): [a, b, c]" lines.
+// Oracle's progress counters on a request (FA_EMCC_counter_1_*), checked
+// against the job's counterCheck. Some jobs say Succeeded but did nothing.
+function checkCounters(job, essRequestJson) {
+  const c = job.counterCheck;
+  if (!c) return { issues: [], rows: null };
+  const params = Array.isArray(essRequestJson?.requestParameters) ? essRequestJson.requestParameters : [];
+  const num = name => {
+    const v = params.find(p => p?.name === `FA_EMCC_counter_1_${name}`)?.value;
+    return v == null || v === '' || Number.isNaN(Number(v)) ? null : Number(v);
+  };
+  const total = num('total'), processed = num('processed'), failed = num('failed');
+  const issues = [];
+  if (total == null) {
+    if (c.minTotal != null || c.maxFailed != null) issues.push("Oracle didn't report progress counters, so the app couldn't confirm the job did anything.");
+  } else {
+    if (c.minTotal != null && total < c.minTotal) issues.push(`Oracle's counters show ${total} items in total. The job probably did nothing (check the Indexing Mode).`);
+    if (c.maxFailed != null && failed != null && failed > c.maxFailed) issues.push(`Oracle's counters show ${failed} of ${total} items failed.`);
+  }
+  // Some parents hand the work to child requests and never update "processed".
+  return { issues, rows: c.rowsFrom === 'total' ? total : processed };
+}
+
+function parseCreatedIndices(log) {
+  const found = new Set();
+  for (const m of String(log ?? '').matchAll(/Indices\s*\(created\)\s*:\s*\[([^\]]*)\]/gi)) {
+    for (const part of m[1].split(',')) {
+      const name = part.trim().replace(/^["']|["']$/g, '').trim();
+      if (INDEX_NAME_RE.test(name)) found.add(name);
+    }
+  }
+  return [...found].sort();
+}
+
+// Oracle's list vs the config: new, missing and excluded on purpose.
+function compareIndexes(oracleNames, config) {
+  const steps = (config.steps ?? []).map(s => s.index);
+  const excl = Array.isArray(config.exclusions) ? config.exclusions : [];
+  const exclusionFor = name => excl.find(x => (x.index ? x.index === name : x.prefix && name.startsWith(x.prefix)));
+  const inOracle = new Set(oracleNames);
+  return {
+    newInOracle: oracleNames.filter(n => !steps.includes(n) && !exclusionFor(n)),
+    missingFromOracle: steps.filter(n => !inOracle.has(n)),
+    excluded: oracleNames.filter(n => !steps.includes(n) && exclusionFor(n))
+      .map(n => ({ index: n, reason: exclusionFor(n).reason ?? '' })),
+    matched: steps.filter(n => inOracle.has(n)).length,
+  };
+}
 
 function createReindexer({ fetch, dataDir, defaultConfigPath, onProgress, onAlert, getSlackWebhook,
                            sleep = ms => new Promise(r => setTimeout(r, ms)) }) {
@@ -529,7 +609,8 @@ function createReindexer({ fetch, dataDir, defaultConfigPath, onProgress, onAler
   }
 
   async function alert(run, level, text, step) {
-    const slack = await postSlack(text);
+    // Testers can turn Slack off for a run so the channel only gets real runs.
+    const slack = run.slackOff ? 'off for this run' : await postSlack(text);
     run.alerts.push({ at: iso(), level, slack, text });
     emit(run);
     const dialogText = level === 'complete' && run.mode !== 'single' ? formatSummaryShort(run) : text;
@@ -633,6 +714,16 @@ function createReindexer({ fetch, dataDir, defaultConfigPath, onProgress, onAler
       if (final === 'SUCCEEDED') {
         const res = log != null ? checkLog(job, step, log)
           : { rows: null, issues: job.requireLogCheck === false ? [] : [`Couldn't read the log to check it: ${logErr}`] };
+        if (job.counterCheck) {
+          let ess = null;
+          try { ess = await active.api.essRequest(step.requestId, { detailed: true }); }
+          catch (e) { res.issues.push(`Couldn't read Oracle's progress counters: ${e.message}`); }
+          if (ess) {
+            const cc = checkCounters(job, ess);
+            res.issues.push(...cc.issues);
+            if (cc.rows != null) res.rows = cc.rows;
+          }
+        }
         step.rows = res.rows;
         step.recreateOnly = res.recreateOnly === true;
         step.issues = res.issues;
@@ -688,7 +779,7 @@ function createReindexer({ fetch, dataDir, defaultConfigPath, onProgress, onAler
 
   function start(params) {
     if (active) return { ok: false, error: 'A rebuild is already running.' };
-    const { baseUrl, username, password, confirmName, mode, stepId, runId, fromStepId } = params ?? {};
+    const { baseUrl, username, password, confirmName, mode, stepId, runId, fromStepId, slack = true } = params ?? {};
     if (!username || !password) return { ok: false, error: 'Enter your username and password first.' };
 
     let config;
@@ -741,7 +832,8 @@ function createReindexer({ fetch, dataDir, defaultConfigPath, onProgress, onAler
         mode, instance: inst.name, host: inst.host, username, startedAt: iso(), alerts: [],
       });
     }
-    Object.assign(run, { status: 'running', endedAt: null, stopReason: null });
+    // Set on every start, so a resume can turn Slack back on (or off).
+    Object.assign(run, { status: 'running', endedAt: null, stopReason: null, slackOff: slack === false });
 
     const authHeader = `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`;
     active = { run, stopRequested: false, api: makeApi({ fetch, baseUrl, authHeader }) };
@@ -773,6 +865,163 @@ function createReindexer({ fetch, dataDir, defaultConfigPath, onProgress, onAler
     };
   }
 
+  const apiFor = ({ baseUrl, username, password }) =>
+    makeApi({ fetch, baseUrl, authHeader: `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}` });
+
+  // Finds recent requests for one job, newest first. Read-only, so any instance
+  // (including Prod) is allowed. Oracle's filter, sort and paging support isn't
+  // documented for our release, so each is tried, checked against what comes
+  // back, and re-applied here. Notes explain what worked, for troubleshooting.
+  async function findRequests({ baseUrl, username, password, jobName, submitter, days, paramValue = null,
+    onPage = null, timeLimitMs = 150000 }) {
+    if (!baseUrl || !username || !password) return { ok: false, error: 'Enter the environment, username and password first.' };
+    if (!/^[A-Za-z0-9_]+$/.test(String(jobName ?? ''))) return { ok: false, error: 'Unknown job name.' };
+    // Submitter and search window default to the config's indexCheck settings.
+    if (submitter === undefined || days === undefined) {
+      let ic = {};
+      try { ic = loadConfig(dataDir, defaultConfigPath).config.indexCheck ?? {}; } catch { /* use defaults */ }
+      if (submitter === undefined) submitter = ic.submitter ?? 'FAADMIN';
+      if (days === undefined) days = ic.days ?? 120;
+    }
+    const api = apiFor({ baseUrl, username, password });
+    const since = new Date(Date.now() - days * 86400000).toISOString().replace(/\.\d+Z$/, 'Z');
+    const isJob = it => reqJob(it).toLowerCase().includes(jobName.toLowerCase());
+    const isUser = it => !submitter || !reqUser(it) || String(reqUser(it)).toUpperCase() === submitter.toUpperCase();
+    // Optional: only requests with this parameter value (e.g. an index name).
+    const hasParam = it => !paramValue || JSON.stringify(it?.requestParameters ?? []).includes(`"${paramValue}"`);
+    const want = it => isJob(it) && isUser(it) && hasParam(it);
+    const time = it => Date.parse(reqTime(it) ?? '') || null;
+    // No submitter filter on Oracle's side: it's case-sensitive there, and Oracle
+    // records FAAdmin for some jobs and FAADMIN for others. isUser ignores case.
+    const tries = [
+      { label: 'job filter', q: `jobDefinitionId co "${jobName}" and submissionTime gt "${since}"` },
+      { label: 'date filter', q: `submissionTime gt "${since}"` },
+    ];
+    const LIMIT = 200, MAX_PAGES = 50;
+    const deadline = Date.now() + timeLimitMs;
+    const notes = [];
+    for (const t of tries) {
+      if (Date.now() > deadline) break;
+      let orderBy = 'submissionTime:desc';
+      let items = [], pages = 0, sampleKeys = null, stopNote = '';
+      try {
+        for (;;) {
+          if (Date.now() > deadline) { stopNote = `; stopped at the ${Math.round(timeLimitMs / 1000)}-second time limit, so older requests weren't searched`; break; }
+          let page;
+          try {
+            page = await api.searchRequests({ q: t.q, offset: items.length, limit: LIMIT, orderBy });
+          } catch (e) {
+            if (!orderBy || pages > 0) throw e;
+            notes.push(`${t.label}: sorting newest first was refused (${e.message.slice(0, 120)}); trying without it.`);
+            orderBy = null;
+            continue;
+          }
+          pages++;
+          if (!sampleKeys && page.items[0]) sampleKeys = Object.keys(page.items[0]);
+          if (items.length && page.items[0] && reqId(page.items[0]) === reqId(items[0])) { stopNote = '; Oracle ignored the page offset'; break; }
+          items.push(...page.items);
+          onPage?.({ label: t.label, pages, searched: items.length, matches: items.filter(want).length });
+          // Stop once Oracle has clearly sorted newest first and we have plenty of candidates.
+          const times = items.map(time);
+          const sortedDesc = times.every(x => x != null) && times.every((x, i) => i === 0 || x <= times[i - 1]);
+          if (sortedDesc && items.filter(want).filter(it => hasLogState(normalizeStatus(it.state))).length >= 10) { stopNote = '; sorted newest first, so stopped early'; break; }
+          if (!(page.hasMore || page.items.length >= LIMIT) || page.items.length === 0) break;
+          if (pages >= MAX_PAGES) { stopNote = `; stopped after ${MAX_PAGES} pages, so the newest requests may be missing`; break; }
+        }
+      } catch (e) {
+        notes.push(`${t.label}: ${e.message}`);
+        continue;
+      }
+      // Oracle's search results leave requestParameters empty, so when matching
+      // by parameter, open each request of this job (as Inspect does) and check.
+      let detailNote = '';
+      if (paramValue && items.some(isJob) && !items.some(it => Array.isArray(it?.requestParameters))) {
+        const todo = items.filter(it => isJob(it) && isUser(it)).slice(0, 100);
+        let opened = 0, failed = 0;
+        for (let i = 0; i < todo.length && Date.now() <= deadline; i += 5) {
+          await Promise.all(todo.slice(i, i + 5).map(async it => {
+            try {
+              const d = await api.essRequest(reqId(it), { detailed: true });
+              it.requestParameters = Array.isArray(d?.requestParameters) ? d.requestParameters : [];
+              opened++;
+            } catch { failed++; }
+          }));
+          onPage?.({ label: 'opening requests', pages, searched: opened, matches: items.filter(want).length });
+        }
+        detailNote = `; search results had no parameters, so opened ${opened} request(s) to read them${failed ? ` (${failed} failed)` : ''}${opened + failed < todo.length ? ', stopped at the time limit' : ''}`;
+      }
+      const matches = items.filter(want);
+      notes.push(`${t.label}: ${items.length} request(s) in ${pages} page(s), ${matches.length} for ${jobName}${submitter ? ` by ${submitter}` : ''}${paramValue ? ` with ${paramValue}` : ''}${stopNote}${detailNote}`);
+      if (items.length && !items.some(it => reqJob(it))) {
+        notes.push('Oracle returned requests without a job name, so they can\'t be matched.');
+        continue;
+      }
+      // If Oracle honored the job filter (everything returned is this job), its
+      // answer stands: falling back to a date-only search would page through
+      // every request in Production.
+      const filterHonored = t.label === 'job filter' && items.every(isJob);
+      if (!matches.length) {
+        if (filterHonored) break;
+        continue;
+      }
+      // Request IDs increase over time, so the highest ID is the newest.
+      const list = matches
+        .sort((x, y) => Number(reqId(y)) - Number(reqId(x)))
+        .map(it => ({ requestId: reqId(it), state: normalizeStatus(it.state) ?? String(it.state ?? ''), submitter: reqUser(it), submitted: reqTime(it), job: reqJob(it) }));
+      // "Latest" is the newest run that has a log: Succeeded, Warning or Error.
+      // Canceled runs and the next scheduled run (still waiting) have none.
+      const latest = list.find(r => hasLogState(r.state)) ?? null;
+      return { ok: true, method: t.label, requests: list, latest, notes };
+    }
+    const what = `${jobName} request${paramValue ? ` for ${paramValue}` : ''}${submitter ? ` submitted by ${submitter}` : ''}`;
+    return { ok: false, error: Date.now() > deadline
+      ? `Couldn't find a ${what} before the time limit. Open "How the app searched" for details.`
+      : `Couldn't find a ${what} in the last ${days} days.`, notes };
+  }
+
+  // Reads Production's index list from the latest reindex log that has one and
+  // compares it with the config. Read-only.
+  async function checkIndexList({ onPage, ...creds }) {
+    const { config } = loadConfig(dataDir, defaultConfigPath);
+    const ic = { jobName: 'FndOSCSReindexJob', submitter: 'FAADMIN', days: 120, ...(config.indexCheck ?? {}) };
+    const host = (() => { try { return new URL(creds.baseUrl).host.toLowerCase(); } catch { return ''; } })();
+    const isProd = (config.prodHosts ?? []).some(h => h.toLowerCase() === host);
+    const found = await findRequests({ ...creds, ...ic, onPage });
+    if (!found.ok) return { ...found, host, isProd };
+    const api = apiFor(creds);
+    const tried = [];
+    // Only runs that produce a log; canceled and waiting runs are skipped silently.
+    for (const r of found.requests.filter(x => hasLogState(x.state)).slice(0, 10)) {
+      let names = [];
+      try { names = parseCreatedIndices(await api.log(r.requestId)); }
+      catch (e) { tried.push(`${r.requestId}: ${e.message}`); continue; }
+      if (!names.length) { tried.push(`${r.requestId}: no "Indices (created)" line. Normal for a run that had nothing to reindex or didn't finish; not an error.`); continue; }
+      let submitted = r.submitted;
+      if (!submitted) {
+        try { submitted = (await api.essRequest(r.requestId, { detailed: true }))?.submissionTime ?? null; } catch { /* date stays unknown */ }
+      }
+      const ageDays = submitted && Date.parse(submitted) ? Math.floor((Date.now() - Date.parse(submitted)) / 86400000) : null;
+      return {
+        ok: true, host, isProd, request: { ...r, submitted }, ageDays, oracleCount: names.length,
+        noExclusions: !(Array.isArray(config.exclusions) && config.exclusions.length),
+        ...compareIndexes(names, config), tried, notes: found.notes, method: found.method,
+      };
+    }
+    return { ok: false, host, isProd, error: `None of the most recent finished ${ic.jobName} requests had an "Indices (created)" line in its log.`, tried, notes: found.notes };
+  }
+
+  // Who created an index: ingest requests (any submitter) with that index as a parameter.
+  async function findIndexRequests({ index, ...creds }) {
+    if (!INDEX_NAME_RE.test(String(index ?? ''))) return { ok: false, error: 'Not a valid index name.' };
+    let jobName = 'FndOSCSIndexIngestJob', days = 120;
+    try {
+      const { config } = loadConfig(dataDir, defaultConfigPath);
+      jobName = config.jobs?.ingest?.jobName ?? jobName;
+      days = config.indexCheck?.days ?? days;
+    } catch { /* defaults */ }
+    return findRequests({ ...creds, jobName, submitter: null, days, paramValue: index });
+  }
+
   function getConfigInfo(baseUrl) {
     try {
       const { config, path: p, isUserCopy } = loadConfig(dataDir, defaultConfigPath);
@@ -790,7 +1039,7 @@ function createReindexer({ fetch, dataDir, defaultConfigPath, onProgress, onAler
   }
 
   return {
-    start, stop, inspect, listRuns, getConfigInfo,
+    start, stop, inspect, listRuns, getConfigInfo, findRequests, checkIndexList, findIndexRequests,
     postSlack,
     isRunning: () => !!active,
     current  : () => (active ? clone(active.run) : null),
@@ -809,4 +1058,5 @@ module.exports = {
   summarizeConfigDiff, resetUserConfig,
   normalizeStatus, isFinalStatus, isIndexBusy, validateConfig, checkInstance, planSteps,
   buildArgs, assertSubmittable, erpArg, unzipEntries, checkLog, logExcerpt, headTail, makeApi,
+  parseCreatedIndices, compareIndexes, checkCounters,
 };

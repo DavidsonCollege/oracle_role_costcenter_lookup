@@ -572,6 +572,8 @@ function oscsModeChanged() {
   document.getElementById('oscsStep').style.display     = mode === 'single' ? '' : 'none';
   document.getElementById('oscsRun').style.display      = mode === 'resume' ? '' : 'none';
   document.getElementById('oscsFromStep').style.display = mode === 'resume' ? '' : 'none';
+  // Tests are usually noise for the channel, so Slack starts off for them.
+  document.getElementById('oscsSlackOn').checked = mode !== 'single';
 }
 
 async function oscsStart() {
@@ -584,11 +586,12 @@ async function oscsStart() {
     stepId     : document.getElementById('oscsStep').value,
     runId      : document.getElementById('oscsRun').value,
     fromStepId : document.getElementById('oscsFromStep').value,
+    slack      : document.getElementById('oscsSlackOn').checked,
   };
 
   // Guardrail 5 exception: a single ACL job is allowed only as a deliberate test.
   if (mode === 'single' && params.stepId.startsWith('acl:') &&
-      !confirm('Submit this ACL job on its own? Normally ACL jobs run only after every ingest step succeeds.')) return;
+      !confirm('Submit this job on its own? Normally the jobs after the indexes run only after every index step succeeds.')) return;
 
   const btn = document.getElementById('oscsStartBtn');
   btn.disabled = true;
@@ -696,6 +699,121 @@ document.getElementById('oscsInspectOut').addEventListener('click', async e => {
     btn.textContent = 'Copy failed';
   }
   setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
+});
+
+// Diagnostics shown under Find latest / Check index list, so a failed search
+// on a new Oracle release can be pasted back for a fix.
+function oscsNotesHtml(r) {
+  const lines = [...(r.notes ?? []), ...(r.tried?.length ? ['Logs checked:', ...r.tried] : [])];
+  if (!lines.length) return '';
+  return `<details class="oscs-details"><summary>How the app searched${r.method ? ` (used: ${esc(r.method)})` : ''}</summary><pre>${esc(lines.join('\n'))}</pre></details>`;
+}
+
+// Live progress for the read-only searches: whichever search is running owns
+// this element. Searches run one at a time from the UI.
+let oscsSearchStatusEl = null;
+window.hcmAPI.onOscsSearchProgress(p => {
+  if (oscsSearchStatusEl) {
+    oscsSearchStatusEl.textContent = `Searching Oracle (${p.label})… ${p.searched.toLocaleString()} requests checked, ${p.matches} match${p.matches === 1 ? '' : 'es'} so far. Stops after about 2½ minutes.`;
+  }
+});
+function oscsSearching(el, text) {
+  el.innerHTML = `<p class="oscs-hint">${esc(text)}</p>`;
+  oscsSearchStatusEl = el.firstElementChild;
+}
+
+async function oscsFindLatest() {
+  const out = document.getElementById('oscsFindOut');
+  const btn = document.getElementById('oscsFindBtn');
+  const jobName = document.getElementById('oscsFindJob').value;
+  btn.disabled = true; btn.classList.add('loading');
+  oscsSearching(out, 'Searching Oracle for recent requests…');
+  try {
+    const r = await window.hcmAPI.oscsFindRequests({ ...oscsCreds(), jobName });
+    if (!r.ok) { out.innerHTML = `<p class="oscs-msg bad">${esc(r.error)}</p>${oscsNotesHtml(r)}`; return; }
+    const rows = r.requests.slice(0, 8).map(q => `<li><button class="linklike" data-inspect="${esc(q.requestId)}">${esc(q.requestId)}</button>
+      ${esc(q.state)}${q.submitted ? `, ${esc(new Date(q.submitted).toLocaleString())}` : ''}${q.submitter ? `, ${esc(q.submitter)}` : ''}</li>`).join('');
+    out.innerHTML = `<p class="oscs-hint">Recent ${esc(jobName)} requests, newest first. ${r.latest ? `Inspecting ${esc(r.latest.requestId)}, the newest one that finished (Succeeded, Warning or Error).` : 'None of them has finished yet.'} Click another number to inspect it.</p>
+      <ul class="oscs-check-list">${rows}</ul>${oscsNotesHtml(r)}`;
+    if (r.latest) {
+      document.getElementById('oscsInspectId').value = r.latest.requestId;
+      oscsInspect();
+    }
+  } finally {
+    oscsSearchStatusEl = null;
+    btn.disabled = false; btn.classList.remove('loading');
+  }
+}
+
+async function oscsCheckIndexList() {
+  const out = document.getElementById('oscsCheckIndexOut');
+  const btn = document.getElementById('oscsCheckIndexBtn');
+  btn.disabled = true; btn.classList.add('loading');
+  oscsSearching(out, 'Finding the latest reindex request…');
+  try {
+    const r = await window.hcmAPI.oscsCheckIndexList(oscsCreds());
+    const prodWarn = r.host && !r.isProd
+      ? `<p class="oscs-msg bad">This is ${esc(r.host)}, not Production. Compare against Production's list: test environments can have extra indexes left over from testing.</p>` : '';
+    if (!r.ok) { out.innerHTML = `${prodWarn}<p class="oscs-msg bad">${esc(r.error)}</p>${oscsNotesHtml(r)}`; return; }
+    const list = items => (items.length ? `<ul class="oscs-check-list">${items.join('')}</ul>` : '<p class="oscs-hint">None.</p>');
+    const logDate = r.request.submitted ? new Date(r.request.submitted).toLocaleDateString() : null;
+    const staleWarn = r.ageDays == null
+      ? '<p class="oscs-msg bad">Oracle didn\'t say when this request ran. Check its date with Inspect before relying on this list.</p>'
+      : r.ageDays > 7
+        ? `<p class="oscs-msg bad">This log is ${r.ageDays} days old. If the quarterly update ran since then, Oracle's newer reindex request wasn't found. Open "How the app searched" below and send it to the app's owner.</p>` : '';
+    const exclWarn = r.noExclusions
+      ? '<p class="oscs-msg bad">Your config has no exclusion list, so indexes we skip on purpose show as New in Oracle. Click Replace with shipped config at the top of this tab, then check again.</p>' : '';
+    out.innerHTML = `${prodWarn}${exclWarn}
+      <div class="oscs-diff"><strong>Log from request ${esc(r.request.requestId)}, submitted ${esc(logDate ?? 'on an unknown date')}</strong>${r.ageDays != null ? ` (${r.ageDays} day${r.ageDays === 1 ? '' : 's'} ago)` : ''}.
+      ${r.oracleCount} indexes in this log; ${r.matched} match the rebuild's step list.</div>${staleWarn}
+      <p class="oscs-sub">New in Oracle (${r.newInOracle.length})</p>
+      ${r.newInOracle.length ? '<p class="oscs-hint">Not in the step list or the exclusion list. Add each one to the steps (test it first) or to the exclusions with a reason.</p>' : ''}
+      ${list(r.newInOracle.map(n => `<li>${esc(n)} <button class="linklike" data-whocreated="${esc(n)}">Who created it?</button><div class="oscs-who"></div></li>`))}
+      <p class="oscs-sub">Missing from Oracle (${r.missingFromOracle.length})</p>
+      ${r.missingFromOracle.length ? `<p class="oscs-hint">In the step list but not in this log. If an index was created after ${esc(logDate ?? 'this log')}, it won't be listed until the next reindex run; check again then. Otherwise, check whether Oracle removed or renamed it.</p>` : ''}
+      ${list(r.missingFromOracle.map(n => `<li>${esc(n)}</li>`))}
+      <p class="oscs-sub">Excluded on purpose (${r.excluded.length})</p>
+      ${list(r.excluded.map(x => `<li>${esc(x.index)}${x.reason ? ` <span class="oscs-hint">– ${esc(x.reason)}</span>` : ''}</li>`))}
+      ${oscsNotesHtml(r)}`;
+  } finally {
+    oscsSearchStatusEl = null;
+    btn.disabled = false; btn.classList.remove('loading');
+  }
+}
+
+// Ingest requests (any submitter) that name this index, newest first.
+document.getElementById('oscsCheckIndexOut').addEventListener('click', async e => {
+  const insp = e.target.closest('[data-inspect]');
+  if (insp) {
+    document.getElementById('oscsInspectId').value = insp.dataset.inspect;
+    oscsInspect();
+    document.getElementById('oscsInspectId').scrollIntoView({ block: 'center' });
+    return;
+  }
+  const b = e.target.closest('[data-whocreated]');
+  if (!b) return;
+  const out = b.parentElement.querySelector('.oscs-who');
+  oscsSearching(out, 'Searching index ingest requests…');
+  b.disabled = true;
+  try {
+    const r = await window.hcmAPI.oscsFindIndexRequests({ ...oscsCreds(), index: b.dataset.whocreated });
+    if (!r.ok) { out.innerHTML = `<p class="oscs-msg bad">${esc(r.error)}</p>${oscsNotesHtml(r)}`; return; }
+    out.innerHTML = `<p class="oscs-hint">Ingest requests for this index, newest first. The oldest is usually the one that created it. Click a number to inspect it.</p>
+      <ul class="oscs-check-list">${r.requests.slice(0, 10).map(q => `<li><button class="linklike" data-inspect="${esc(q.requestId)}">${esc(q.requestId)}</button>
+        ${esc(q.state)}${q.submitted ? `, ${esc(new Date(q.submitted).toLocaleString())}` : ''}${q.submitter ? `, submitted by ${esc(q.submitter)}` : ''}</li>`).join('')}</ul>${oscsNotesHtml(r)}`;
+  } finally {
+    oscsSearchStatusEl = null;
+    b.disabled = false;
+  }
+});
+
+document.getElementById('oscsFindBtn').addEventListener('click', oscsFindLatest);
+document.getElementById('oscsCheckIndexBtn').addEventListener('click', oscsCheckIndexList);
+document.getElementById('oscsFindOut').addEventListener('click', e => {
+  const b = e.target.closest('[data-inspect]');
+  if (!b) return;
+  document.getElementById('oscsInspectId').value = b.dataset.inspect;
+  oscsInspect();
 });
 
 async function oscsSaveSlack(url) {

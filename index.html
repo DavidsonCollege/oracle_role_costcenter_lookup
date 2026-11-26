@@ -176,6 +176,7 @@
     }
 
     button.loading .spinner { display: block; }
+    .btn-secondary .spinner { border-color: rgba(55,65,81,0.25); border-top-color: #374151; }
     button.loading .btn-label { display: none; }
 
     @keyframes spin { to { transform: rotate(360deg); } }
@@ -536,6 +537,8 @@
     }
     .btn-secondary:hover:not(:disabled) { background: #f9fafb; border-color: #9ca3af; }
     .oscs-hint { font-size: 0.78rem; color: #6b7280; }
+    .oscs-check { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.82rem; color: #374151; }
+    .oscs-check input { width: auto; margin: 0; }
     .oscs-steps { margin: 0 0 0.4rem; padding-left: 1.2rem; line-height: 1.45; }
     .oscs-steps li { margin-bottom: 0.2rem; }
     .oscs-steps-note { margin: 0 0 0.6rem; }
@@ -577,6 +580,11 @@
       margin-bottom: 0.8rem;
     }
     .oscs-diff ul { margin: 0.4rem 0 0.6rem 1.2rem; }
+    .oscs-check-list { margin: 0.2rem 0 0.6rem 1.2rem; font-size: 0.8rem; }
+    .oscs-check-list li { margin-bottom: 0.15rem; }
+    .oscs-details { font-size: 0.75rem; color: #6b7280; margin-bottom: 0.6rem; }
+    .oscs-details pre { white-space: pre-wrap; word-break: break-word; margin: 0.3rem 0 0; }
+    .linklike { background: none; border: none; padding: 0; color: #1d4ed8; text-decoration: underline; cursor: pointer; font: inherit; }
     .oscs-runhead { font-size: 0.82rem; margin-top: 0.8rem; }
     .oscs-boxhead { display: flex; align-items: center; justify-content: space-between; }
     .btn-copy { font-size: 0.72rem; padding: 0.2rem 0.6rem; }
@@ -672,7 +680,7 @@
 
       <div class="oscs-note">
         Use only after a Prod-to-Test refresh of a non-Prod instance. <strong>Don't run this after quarterly updates</strong>: Oracle reingests changed indexes itself during updates.
-        It never runs against Production. It submits the index ingest job for each index one at a time, waits for each to finish, then runs Compute Users ACL and the Learning ACL job. It stops at the first error or warning and alerts the team.
+        It never runs against Production. It submits the index ingest job for each index one at a time, waits for each to finish, then runs Compute Users ACL, the Learning ACL job and the three Recruiting index jobs. It stops at the first error or warning and alerts the team.
         Uses the environment, username and password above; your account needs the privilege to submit these jobs.
       </div>
 
@@ -699,6 +707,10 @@
         <span class="oscs-hint" id="oscsConfirmHint"></span>
       </div>
       <div class="oscs-row">
+        <label class="oscs-check"><input type="checkbox" id="oscsSlackOn" checked /> Post alerts to Slack for this run</label>
+        <span class="oscs-hint">Turn off while testing so the channel only gets real runs. Alerts still show in the app.</span>
+      </div>
+      <div class="oscs-row">
         <button id="oscsStartBtn"><span class="spinner"></span><span class="btn-label">Start</span></button>
         <button id="oscsStopBtn" class="btn-secondary" disabled>Stop after current step</button>
         <button id="oscsOpenConfigBtn" class="btn-secondary">Edit config</button>
@@ -723,11 +735,27 @@
       </div>
       <div id="oscsSlackMsg" class="oscs-msg oscs-hint"></div>
 
+      <p class="oscs-sub">Check index list (after the Production quarterly update)</p>
+      <p class="oscs-hint oscs-steps-note">Choose Production at the top, then click Check index list. Read-only. The app finds Oracle's latest reindex request (FndOSCSReindexJob, submitted by FAADMIN), reads the list of indexes in its log and compares it with the rebuild's step list and exclusion list.</p>
+      <div class="oscs-row">
+        <button id="oscsCheckIndexBtn" class="btn-secondary"><span class="spinner"></span><span class="btn-label">Check index list</span></button>
+      </div>
+      <div id="oscsCheckIndexOut"></div>
+
       <p class="oscs-sub">Inspect a request (read-only; works on any instance)</p>
+      <p class="oscs-hint oscs-steps-note">Enter an Oracle scheduled process request ID to see its status, parameters and log without changing anything. Use it to find out why a rebuild step stopped, or to read the parameters a past run used, including on Production. It shows the start and end of long logs, and each box has a Copy button.</p>
       <div class="oscs-row">
         <input type="text" id="oscsInspectId" placeholder="Request ID, e.g. 11288959" />
         <button id="oscsInspectBtn" class="btn-secondary">Inspect</button>
       </div>
+      <div class="oscs-row">
+        <select id="oscsFindJob" aria-label="Job to find">
+          <option value="FndOSCSReindexJob">Latest reindex job (FndOSCSReindexJob)</option>
+          <option value="FndOSCSIndexIngestJob">Latest index ingest job (FndOSCSIndexIngestJob)</option>
+        </select>
+        <button id="oscsFindBtn" class="btn-secondary"><span class="spinner"></span><span class="btn-label">Find latest</span></button>
+      </div>
+      <div id="oscsFindOut"></div>
       <div id="oscsInspectOut"></div>
     </div>
 

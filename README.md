@@ -40,13 +40,14 @@ Enter the environment, username and password at the top. Below them are two tabs
 
 Use this only after a Prod-to-Test refresh of a non-Production instance. **Don't run it after quarterly updates**: Oracle reingests changed indexes itself during updates.
 
-It submits Oracle's index ingest job for each search index one at a time and waits for each to finish. It then runs **Compute Users ACL** and **Process Access Control Lists for Learning Items for OSCS**. It stops at the first error or warning and alerts the team. It runs as you, with the credentials at the top, so your Oracle account needs permission to submit these jobs.
+It submits Oracle's index ingest job for each search index one at a time and waits for each to finish. It then runs **Compute Users ACL**, **Process Access Control Lists for Learning Items for OSCS**, and the Recruiting jobs: **Load and Index Master Geography Hierarchy** (United States), **Load and Index Job Requisitions** and **Load and Index Candidates**. The last two use Indexing Mode **Drop and Recreate Index**. Upgrade Current Index does nothing after a refresh, even though it reports Succeeded. It stops at the first error or warning and alerts the team. It runs as you, with the credentials at the top, so your Oracle account needs permission to submit these jobs.
 
 **Safeguards**
 - It refuses to run against Production.
 - You must type the instance name (for example `dev1`) to confirm.
 - It never submits a step with a blank index name.
-- The two ACL jobs run only after every index step has succeeded.
+- The ACL and Recruiting jobs run only after every index step has succeeded.
+- For the Recruiting jobs, the app also reads Oracle's progress counters and the log. A run that processed nothing, had failed items or logged "Job failed" stops with a warning.
 
 **Running it**
 1. Pick the environment at the top and open the **Scheduled Processes** tab.
@@ -66,6 +67,15 @@ It submits Oracle's index ingest job for each search index one at a time and wai
 - **recreate only** in the Rows column is expected for some indexes, such as `fa-hcm-acl`, `fa-hcm-learn-acl`, `fnd-recentsearch` and `fa-hcm-person-results`. Oracle rebuilds them empty and fills them as people use the system.
 - **Inspect a request** at the bottom of the tab is read-only and works on any instance, including Production. Use it to look at a past request's status, parameters and log. Each box has a **Copy** button.
 
+**Check index list (after the Production quarterly update)**
+- Choose Production at the top and click **Check index list**. It's read-only. The app finds Oracle's latest reindex request (FndOSCSReindexJob, submitted by FAADMIN), reads the `Indices (created): [...]` line in its log, and lists:
+  - **New in Oracle**: in Production but not in the step list or the exclusion list. Add it to the steps (test it first), or add it to the exclusions with a reason.
+  - **Missing from Oracle**: in the step list but not in that log. An index created after the log's date won't be listed until the next reindex run, so check again then. Otherwise check whether Oracle removed or renamed it.
+- The app shows the date of the log it read and warns if it's more than a week old.
+  - **Excluded on purpose**: indexes we deliberately don't rebuild, with the reason.
+- **Find latest**, next to Inspect, finds the newest reindex or index ingest request and inspects it for you.
+- If either one can't find the request, open **How the app searched** under the result and send that text to the app's owner.
+
 **Config and run records**
 - The list of indexes and the job settings come from `oscs-reindex.config.json`, which ships with the app. **Edit config** opens your own copy. If your copy differs from the shipped one after an update, the tab shows the differences and a **Replace with shipped config** button. Your old copy is backed up first.
 - **Run records** opens the folder where every run is saved, one file per run. Resume reads from these files.
@@ -80,6 +90,8 @@ Rebuild alerts go to **#team-admin-services-private**. Each computer that runs r
 The URL is stored encrypted on your computer, never in the app's settings file or this repository, and it stays through app updates. You'll need to enter it again on a new computer or user account. Treat it like a password: anyone who has it can post to the channel. Don't paste it into chat, email or tickets. **Remove** deletes it from your computer.
 
 Without a webhook, alerts only show in the app.
+
+**Testing without posting:** clear **Post alerts to Slack for this run** before clicking **Start**. It starts cleared for **Test one step** and ticked for full and resumed runs. Alerts still appear in the app, and the run record notes that Slack was off. **Send test** always posts.
 
 ---
 
@@ -146,6 +158,8 @@ Open `oscs-reindex.config.json` and set:
 
 - `prodHosts`: your Production host name. The rebuild refuses to run against it.
 - `nonProdHostPattern`: a pattern matching your non-Production hosts. Its first group is the instance name people type to confirm, such as `dev1`.
+- `exclusions`: indexes in Production that you deliberately don't rebuild, each with a reason. Use `index` for one name or `prefix` for a group.
+- `indexCheck`: the job name, submitter and number of days Check index list searches.
 - `steps`: the indexes to rebuild. Oracle's list varies by instance, so test each one with **Test one step** and remove any that load 0 rows when they shouldn't.
 
 `OSCS_REINDEX_FEATURE.md` has the full spec. For Slack alerts, create your own Slack app with an incoming webhook for your channel, and change the channel name shown on the Scheduled Processes tab in `index.html`.

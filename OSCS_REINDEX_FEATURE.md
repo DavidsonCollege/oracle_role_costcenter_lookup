@@ -125,32 +125,33 @@ Keep this as config (JSON or YAML), not hard-coded, so the team can edit it. **F
 | 6 | `fa-hcm-location` | HCM | |
 | 7 | `fa-hcm-organization` | HCM | |
 | 8 | `fa-hcm-personprofile` | HCM | |
-| 9 | `fa-hcm-modelprofile` | HCM | |
-| 10 | `fa-hcm-personbenefits` | Benefits | |
-| 11 | `fa-hcm-timecard` | Time and Labor | |
-| 12 | `fa-hcm-requisition` | Recruiting | |
-| 13 | `fa-hcm-irc-geohierarchies` | Recruiting | |
-| 14 | `fa-hcm-workerjourney` | Journeys | |
-| 15 | `fa-hcm-workerjourneytask` | Journeys | |
-| 16 | `fa-hcm-savedsearch` | Saved searches | |
-| 17 | `fa-hcm-learningitem` | Learning | Oracle's order: learningitem, then learn-acl, then learningrecord |
-| 18 | `fa-hcm-learn-acl` | Learning security | ACL index, refilled by the Learning ACL job |
-| 19 | `fa-hcm-learningrecord` | Learning | |
-| 20 | `fa-hcm-learningassignmentprofile` | Learning | new in 26D |
-| 21 | `fa-hcm-mylearningassignments` | Learning | new in 26D |
-| 22 | `fa-hcm-learningrecommendation` | Learning | new in 26D |
-| 23 | `fa-fin-exm-expenses` | Expenses | |
-| 24 | `fa-fin-exm-reports` | Expenses | |
-| 25 | `fa-fin-exm-locations` | Expenses | |
-| 26 | `fa-prc-shoppingcatalog` | Procurement | |
-| 27 | `fa-prc-por` | Procurement | |
-| 28 | `fa-prc-pa` | Procurement | 0 rows in Prod is normal |
-| 29 | `fa-prc-poi` | Procurement | verify |
-| 30 | `fa-prc-suppliers` | Procurement | |
-| 31 | `fnd-worklist-approvals` | Platform | verify |
-| 32 | `fnd-ao-tasks-and-places` | Platform (Ask Oracle) | verify |
-| 33 | `fnd-ao-tasks-and-places-sandbox` | Platform (Ask Oracle) | verify |
-| 34 | `fnd-recentsearch` | Platform | verify |
+| 9 | `fa-hcm-contentitem` | HCM (Talent Profile) | Required for Redwood Item Catalogs since 26D (KB937810). Created in Prod 11/21/2026, request 11251202 |
+| 10 | `fa-hcm-modelprofile` | HCM | |
+| 11 | `fa-hcm-personbenefits` | Benefits | |
+| 12 | `fa-hcm-timecard` | Time and Labor | |
+| 13 | `fa-hcm-requisition` | Recruiting | |
+| 14 | `fa-hcm-irc-geohierarchies` | Recruiting | |
+| 15 | `fa-hcm-workerjourney` | Journeys | |
+| 16 | `fa-hcm-workerjourneytask` | Journeys | |
+| 17 | `fa-hcm-savedsearch` | Saved searches | |
+| 18 | `fa-hcm-learningitem` | Learning | Oracle's order: learningitem, then learn-acl, then learningrecord |
+| 19 | `fa-hcm-learn-acl` | Learning security | ACL index, refilled by the Learning ACL job |
+| 20 | `fa-hcm-learningrecord` | Learning | |
+| 21 | `fa-hcm-learningassignmentprofile` | Learning | new in 26D |
+| 22 | `fa-hcm-mylearningassignments` | Learning | new in 26D |
+| 23 | `fa-hcm-learningrecommendation` | Learning | new in 26D |
+| 24 | `fa-fin-exm-expenses` | Expenses | |
+| 25 | `fa-fin-exm-reports` | Expenses | |
+| 26 | `fa-fin-exm-locations` | Expenses | |
+| 27 | `fa-prc-shoppingcatalog` | Procurement | |
+| 28 | `fa-prc-por` | Procurement | |
+| 29 | `fa-prc-pa` | Procurement | 0 rows in Prod is normal |
+| 30 | `fa-prc-poi` | Procurement | verify |
+| 31 | `fa-prc-suppliers` | Procurement | |
+| 32 | `fnd-worklist-approvals` | Platform | verify |
+| 33 | `fnd-ao-tasks-and-places` | Platform (Ask Oracle) | verify |
+| 34 | `fnd-ao-tasks-and-places-sandbox` | Platform (Ask Oracle) | verify |
+| 35 | `fnd-recentsearch` | Platform | verify |
 
 **Leave out** (Oracle-managed or not used at Davidson): `fnd-attachments` (has its own recurring job), `fa-crm-productcatalog`, `fa-scm-rcv-aprcpt`, `fa-scm-msc-lead-time-orders`, `fa-scm-msc-lead-time-insights`, `fa-psc-apo-parcel`.
 
@@ -161,7 +162,7 @@ Keep this as config (JSON or YAML), not hard-coded, so the team can edit it. **F
 1. Confirm the REST endpoint, auth and payload with a **single** ingest of a small index (`fa-hcm-savedsearch`) in a non-Prod instance. Check its log for the right index name and `Use Existing Index` value.
 2. Confirm the ACL jobs' paths and internal parameter values (section 5b), then submit Compute Users ACL by itself.
 3. Run the full sequence in non-Prod. Check every log check passes.
-4. Test as restricted users, including one who hasn't signed in recently: Team Time Cards (line manager, timekeeper), Learning Assignments, person search, Expenses search.
+4. Test as restricted users, including one who hasn't signed in recently: Team Time Cards (line manager, timekeeper), Learning Assignments, person search, Expenses search, Item Catalogs (My Client Groups > Profiles > Item Catalogs; shows "0 items" if `fa-hcm-contentitem` wasn't ingested).
 5. Test failure handling: stop on a forced error, the Slack alert, and resuming from a step.
 
 ## 11. Open questions (VERIFY list)

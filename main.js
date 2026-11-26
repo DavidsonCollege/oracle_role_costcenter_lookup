@@ -207,6 +207,31 @@ ipcMain.handle('oscs:inspect', async (_event, params) => {
   }
 });
 
+// Read-only searches: allowed on any instance, including Production.
+ipcMain.handle('oscs:findRequests', async (event, params) => {
+  try {
+    return await getReindexer().findRequests({ ...params, onPage: p => event.sender.send('oscs:searchProgress', p) });
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
+ipcMain.handle('oscs:checkIndexList', async (event, params) => {
+  try {
+    return await getReindexer().checkIndexList({ ...params, onPage: p => event.sender.send('oscs:searchProgress', p) });
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
+ipcMain.handle('oscs:findIndexRequests', async (event, params) => {
+  try {
+    return await getReindexer().findIndexRequests({ ...params, onPage: p => event.sender.send('oscs:searchProgress', p) });
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
 ipcMain.handle('oscs:setSlackWebhook', async (_event, { url }) => {
   try {
     const p = slackWebhookPath();

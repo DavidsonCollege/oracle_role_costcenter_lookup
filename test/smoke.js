@@ -111,7 +111,9 @@ async function check(name, fn) {
       const st = url.match(/ESSJobStatusRF;requestId=(\d+)/);
       if (st) return json({ items: [{ RequestStatus: statusFor(jobs.get(st[1])) }] });
       const ess = url.match(/\/requests\/(\d+)(?:\?|$)/);
-      if (ess) return json(essFor?.(jobs.get(ess[1])) ?? { state: statusFor(jobs.get(ess[1])) === 'SUCCEEDED' ? 12 : 10 });
+      // Default: finished, with progress counters like Oracle's Recruiting jobs report.
+      if (ess) return json(essFor?.(jobs.get(ess[1])) ?? { state: statusFor(jobs.get(ess[1])) === 'SUCCEEDED' ? 12 : 10,
+        requestParameters: [{ name: 'FA_EMCC_counter_1_total', value: '10' }, { name: 'FA_EMCC_counter_1_processed', value: '10' }, { name: 'FA_EMCC_counter_1_failed', value: '0' }] });
       const lg = url.match(/ESSJobExecutionDetailsRF;requestId=(\d+)/);
       if (lg) {
         const j = jobs.get(lg[1]);
@@ -145,12 +147,12 @@ async function check(name, fn) {
     return { res, alerts, reindexer: r, dir, last: alerts.at(-1)?.run };
   }
 
-  await check('shipped OSCS config is valid, with 30 unique non-blank indexes and every job complete', () => {
+  await check('shipped OSCS config is valid, with 31 unique non-blank indexes and every job complete', () => {
     const cfg = JSON.parse(fs.readFileSync(defaultCfgPath, 'utf8'));
     const v = oscsMod.validateConfig(cfg);
     assert.deepStrictEqual(v.errors, []);
-    assert.strictEqual(cfg.steps.length, 30);
-    assert.deepStrictEqual(v.jobErrors, { ingest: [], computeUsersAcl: [], learningAcl: [] });
+    assert.strictEqual(cfg.steps.length, 31);
+    assert.deepStrictEqual(v.jobErrors, { ingest: [], computeUsersAcl: [], learningAcl: [], recruitingGeography: [], recruitingRequisitions: [], recruitingCandidates: [] });
   });
 
   await check('OSCS: Prod and unknown hosts are refused; confirmation must match', () => {
@@ -175,7 +177,14 @@ async function check(name, fn) {
     assert.ok(res.ok, res.error);
     assert.strictEqual(last.status, 'completed');
     const jobs = oracle.submitted.filter(s => s.job);
-    assert.deepStrictEqual(jobs.map(s => s.args.split(',')[0]), ['fa-hcm-acl', 'fa-hcm-person', 'fa-prc-pa', 'submit.argument1=ALL_USERS', 'submit.argument1=ORA_REFRESH_OSCS_LEARN_ACL']);
+    assert.deepStrictEqual(jobs.map(s => s.args.split(',')[0]), ['fa-hcm-acl', 'fa-hcm-person', 'fa-prc-pa', 'submit.argument1=ALL_USERS', 'submit.argument1=ORA_REFRESH_OSCS_LEARN_ACL', 'submit.argument1=US', 'submit.argument1=FULL', 'submit.argument1=FULL']);
+    // Recruiting: Drop and Recreate Index (FULL), never UPGRADE; Candidates also passes N.
+    assert.strictEqual(jobs[7].args, 'submit.argument1=FULL,submit.argument2=N');
+    assert.strictEqual(jobs[7].jobDefinitionId, 'JobDefinition://oracle/apps/ess/hcm/recruiting/sourcing/core/LoadSearchDocuments');
+    assert.strictEqual(last.steps.at(-1).rows, 10);
+    // Geography: Level 2 omitted, so only argument 1 is sent.
+    assert.strictEqual(jobs[5].args, 'submit.argument1=US');
+    assert.strictEqual(jobs[5].jobDefinitionId, 'JobDefinition://oracle/apps/ess/hcm/recruiting/common/LoadIndexGeographySearchDocument');
     assert.strictEqual(jobs[0].args, 'fa-hcm-acl,false');
     assert.strictEqual(jobs[3].jobDefinitionId, 'JobDefinition://oracle/apps/ess/hcm/test/ComputeUsersACL');
     assert.strictEqual(jobs[3].application, 'EarHcmEss');
@@ -185,13 +194,186 @@ async function check(name, fn) {
     assert.ok(oracle.submitted.at(-1).slack.includes('finished'));
   });
 
+  await check('OSCS: index list is read from "Indices (created)" lines and compared with steps and exclusions', () => {
+    const names = oscsMod.parseCreatedIndices('x\nIndices (created): [fa-hcm-person, "fa-new-one", fnd-attachments]\nIndices (created): [fa-scm-thing]\n');
+    assert.deepStrictEqual(names, ['fa-hcm-person', 'fa-new-one', 'fa-scm-thing', 'fnd-attachments']);
+    const cfg = { steps: [{ index: 'fa-hcm-person' }, { index: 'fa-gone' }],
+      exclusions: [{ index: 'fnd-attachments', reason: 'own job' }, { prefix: 'fa-scm-', reason: 'SCM' }] };
+    const c = oscsMod.compareIndexes(names, cfg);
+    assert.deepStrictEqual(c.newInOracle, ['fa-new-one']);
+    assert.deepStrictEqual(c.missingFromOracle, ['fa-gone']);
+    assert.deepStrictEqual(c.excluded.map(x => x.index), ['fa-scm-thing', 'fnd-attachments']);
+    assert.ok(oscsMod.validateConfig({ ...testConfig([{ index: 'fnd-attachments' }]) }).errors.some(e => /both a step and an exclusion/.test(e)));
+  });
+
+  await check('OSCS: Check index list falls back when Oracle rejects the job filter, skips canceled and empty logs', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oscs-test-'));
+    const cfgPath = path.join(dir, 'default.json');
+    fs.writeFileSync(cfgPath, JSON.stringify(testConfig([{ index: 'fa-hcm-person' }, { index: 'fa-hcm-job' }])));
+    const json = (body, status = 200) => ({ ok: status < 400, status, headers: new Map(), text: async () => JSON.stringify(body) });
+    const job = n => `JobDefinition://oracle/apps/ess/fnd/applcore/${n}`;
+    const items = [
+      { requestId: 50, state: 12, jobDefinitionId: job('FndOSCSReindexJob'), submitter: 'FAAdmin' },
+      { requestId: 70, state: 9, jobDefinitionId: job('FndOSCSReindexJob'), submitter: 'FAADMIN' },
+      { requestId: 65, state: 12, jobDefinitionId: job('FndOSCSReindexJob'), submitter: 'FAADMIN' },
+      { requestId: 80, state: 12, jobDefinitionId: job('FndOSCSReindexJob'), submitter: 'SOMEONE' },
+      { requestId: 95, state: 1, jobDefinitionId: job('FndOSCSReindexJob'), submitter: 'FAADMIN' },
+      { requestId: 90, state: 12, jobDefinitionId: job('OtherJob'), submitter: 'FAADMIN' },
+    ];
+    const logs = { 65: 'No valid indices found', 50: 'Indices (created): [fa-hcm-person, fa-new-one, fnd-attachments]' };
+    const seenQ = [];
+    const fetch = async url => {
+      const u = new URL(url);
+      if (u.pathname.endsWith('/ess/rest/scheduler/v1/requests')) {
+        const q = u.searchParams.get('q') ?? '';
+        seenQ.push(q);
+        if (q.includes('jobDefinitionId')) return json({ title: 'Invalid filter' }, 400);
+        return json({ items: Number(u.searchParams.get('offset')) ? [] : items, hasMore: false });
+      }
+      const lg = url.match(/ESSJobExecutionDetailsRF;requestId=(\d+)/);
+      if (lg) return json({ items: [{ DocumentContent: makeZip('x.log', logs[lg[1]] ?? '').toString('base64') }] });
+      throw new Error(`Unexpected URL ${url}`);
+    };
+    const r = oscsMod.createReindexer({ fetch, dataDir: dir, defaultConfigPath: cfgPath });
+    const res = await r.checkIndexList({ baseUrl: 'https://fa-exci-saasfaprod1.fa.ocs.oraclecloud.com', username: 'u', password: 'p' });
+    assert.ok(res.ok, res.error);
+    assert.strictEqual(res.isProd, true);
+    assert.strictEqual(res.method, 'date filter');
+    assert.strictEqual(res.request.requestId, '50');
+    assert.deepStrictEqual(res.newInOracle, ['fa-new-one']);
+    assert.deepStrictEqual(res.missingFromOracle, ['fa-hcm-job']);
+    assert.deepStrictEqual(res.excluded.map(x => x.index), ['fnd-attachments']);
+    assert.ok(res.tried.some(t => t.startsWith('65:')));
+    assert.ok(!res.tried.some(t => t.startsWith('95:')));
+    assert.ok(!res.tried.some(t => t.startsWith('70:') || t.startsWith('80:')));
+    const found = await r.findRequests({ baseUrl: 'https://fa-exci-saasfaprod1.fa.ocs.oraclecloud.com', username: 'u', password: 'p', jobName: 'FndOSCSReindexJob' });
+    assert.deepStrictEqual(found.requests.map(x => x.requestId), ['95', '70', '65', '50']);
+    assert.strictEqual(found.latest.requestId, '65');
+  });
+
+  await check('OSCS: Who created it finds ingest requests by index parameter, any submitter', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oscs-test-'));
+    const cfgPath = path.join(dir, 'default.json');
+    fs.writeFileSync(cfgPath, JSON.stringify(testConfig()));
+    const json = (body, status = 200) => ({ ok: status < 400, status, headers: new Map(), text: async () => JSON.stringify(body) });
+    const ingest = (id, idx, who) => ({ requestId: id, state: 12, submitter: who, jobDefinitionId: 'JobDefinition://oracle/apps/ess/fnd/applcore/FndOSCSIndexIngestJob',
+      requestParameters: [{ name: 'submit.argument1', value: idx }, { name: 'submit.argument2', value: 'false' }] });
+    const items = [ingest(300, 'fa-hcm-contentitem', 'jdoe'), ingest(310, 'fa-hcm-contentitem-x', 'FAADMIN'), ingest(320, 'fa-hcm-person', 'FAADMIN'), ingest(290, 'fa-hcm-contentitem', 'FAADMIN')];
+    const fetch = async url => json({ items: Number(new URL(url).searchParams.get('offset')) ? [] : items });
+    const r = oscsMod.createReindexer({ fetch, dataDir: dir, defaultConfigPath: cfgPath });
+    const found = await r.findIndexRequests({ baseUrl: 'https://fa-exci-saasfaprod1.fa.ocs.oraclecloud.com', username: 'u', password: 'p', index: 'fa-hcm-contentitem' });
+    assert.ok(found.ok, found.error);
+    assert.deepStrictEqual(found.requests.map(x => [x.requestId, x.submitter]), [['300', 'jdoe'], ['290', 'FAADMIN']]);
+  });
+
+  await check('OSCS: Who created it opens each request when search results have no parameters', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oscs-test-'));
+    const cfgPath = path.join(dir, 'default.json');
+    fs.writeFileSync(cfgPath, JSON.stringify(testConfig()));
+    const json = (body, status = 200) => ({ ok: status < 400, status, headers: new Map(), text: async () => JSON.stringify(body) });
+    const params = { 401: 'fa-hcm-person', 402: 'fa-hcm-contentitem', 403: 'fa-hcm-job' };
+    const fetch = async url => {
+      const u = new URL(url);
+      const one = u.pathname.match(/\/requests\/(\d+)$/);
+      if (one) return json({ requestId: Number(one[1]), requestParameters: [{ name: 'submit.argument1', value: params[one[1]] }] });
+      return json({ items: Number(u.searchParams.get('offset')) ? [] : Object.keys(params).map(id => ({ requestId: Number(id), state: 12, submitter: 'jdoe', jobDefinitionId: 'x/FndOSCSIndexIngestJob', requestParameters: null })) });
+    };
+    const r = oscsMod.createReindexer({ fetch, dataDir: dir, defaultConfigPath: cfgPath });
+    const res = await r.findIndexRequests({ baseUrl: 'https://fa-exci-saasfaprod1.fa.ocs.oraclecloud.com', username: 'u', password: 'p', index: 'fa-hcm-contentitem' });
+    assert.ok(res.ok, res.error);
+    assert.deepStrictEqual(res.requests.map(x => x.requestId), ['402']);
+    assert.ok(res.notes.some(n => /opened 3 request/.test(n)));
+  });
+
+  await check('OSCS: a search with no match stops when Oracle honored the job filter, and respects the time limit', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oscs-test-'));
+    const cfgPath = path.join(dir, 'default.json');
+    fs.writeFileSync(cfgPath, JSON.stringify(testConfig()));
+    const json = (body, status = 200) => ({ ok: status < 400, status, headers: new Map(), text: async () => JSON.stringify(body) });
+    const qs = [];
+    const fetch = async url => {
+      const q = new URL(url).searchParams.get('q') ?? '';
+      qs.push(q);
+      const off = Number(new URL(url).searchParams.get('offset'));
+      return json({ items: off ? [] : [{ requestId: 1, state: 12, jobDefinitionId: 'x/FndOSCSIndexIngestJob', requestParameters: [{ value: 'fa-hcm-person' }] }] });
+    };
+    const r = oscsMod.createReindexer({ fetch, dataDir: dir, defaultConfigPath: cfgPath });
+    const creds = { baseUrl: 'https://fa-exci-saasfaprod1.fa.ocs.oraclecloud.com', username: 'u', password: 'p' };
+    const pages = [];
+    const res = await r.findIndexRequests({ ...creds, index: 'fa-hcm-contentitem', onPage: p => pages.push(p) });
+    assert.strictEqual(res.ok, false);
+    assert.ok(!qs.some(q => !q.includes('jobDefinitionId')), 'should not fall back to a date-only search');
+    assert.ok(pages.length >= 1);
+    // An endless Oracle (always a full page) stops at the time limit.
+    let n = 0;
+    const endless = async () => { await new Promise(res => setTimeout(res, 10)); return json({ items: Array.from({ length: 200 }, () => ({ requestId: ++n, state: 12, jobDefinitionId: 'x/FndOSCSIndexIngestJob' })) }); };
+    const r2 = oscsMod.createReindexer({ fetch: endless, dataDir: dir, defaultConfigPath: cfgPath });
+    const res2 = await r2.findRequests({ ...creds, jobName: 'FndOSCSIndexIngestJob', submitter: null, days: 30, paramValue: 'nope', timeLimitMs: 30 });
+    assert.strictEqual(res2.ok, false);
+    assert.ok(/time limit/.test(res2.error) || res2.notes.some(x => /time limit/.test(x)));
+  });
+
+  await check('OSCS: request search pages past 200 results and retries without sorting when Oracle refuses it', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oscs-test-'));
+    const cfgPath = path.join(dir, 'default.json');
+    fs.writeFileSync(cfgPath, JSON.stringify(testConfig()));
+    const json = (body, status = 200) => ({ ok: status < 400, status, headers: new Map(), text: async () => JSON.stringify(body) });
+    // 450 requests, oldest first, no hasMore flag: like the 200-row batch that hid the newest run.
+    const all = Array.from({ length: 450 }, (_, i) => ({
+      requestId: 1000 + i, state: 12, submitter: 'FAADMIN',
+      jobDefinitionId: `JobDefinition://x/${i % 50 === 0 ? 'FndOSCSReindexJob' : 'Other'}`,
+      submissionTime: new Date(Date.UTC(2026, 9, 1) + i * 3600000).toISOString(),
+    }));
+    let sortRefused = 0;
+    const fetch = async url => {
+      const u = new URL(url);
+      if (u.searchParams.get('orderBy')) { sortRefused++; return json({ title: 'Unknown parameter orderBy' }, 400); }
+      const off = Number(u.searchParams.get('offset')), lim = Number(u.searchParams.get('limit'));
+      return json({ items: all.slice(off, off + lim) });
+    };
+    const r = oscsMod.createReindexer({ fetch, dataDir: dir, defaultConfigPath: cfgPath });
+    const found = await r.findRequests({ baseUrl: 'https://fa-exci-saasfaprod1.fa.ocs.oraclecloud.com', username: 'u', password: 'p', jobName: 'FndOSCSReindexJob' });
+    assert.ok(found.ok, found.error);
+    assert.strictEqual(found.latest.requestId, '1400');
+    assert.strictEqual(found.requests.length, 9);
+    assert.ok(sortRefused >= 1);
+    assert.ok(found.notes.some(n => /sorting newest first was refused/.test(n)));
+  });
+
+  await check('OSCS: Recruiting jobs that say Succeeded but did nothing are caught by counters and the log', () => {
+    const job = { counterCheck: { minTotal: 1, maxFailed: 0 }, logCheck: { type: 'count', requiredPatterns: [], errorPattern: 'Job failed' } };
+    const counters = (t, p, f) => ({ requestParameters: [
+      { name: 'FA_EMCC_counter_1_total', value: String(t) }, { name: 'FA_EMCC_counter_1_processed', value: String(p) }, { name: 'FA_EMCC_counter_1_failed', value: String(f) }] });
+    // dev1 request 10387396: Upgrade Current Index after a refresh.
+    assert.match(oscsMod.checkCounters(job, counters(0, 0, 0)).issues[0], /did nothing/);
+    assert.match(oscsMod.checkLog(job, {}, 'Job failed. Reason: Re-ingestion not applicable as no existing field required to be re-ingested').issues[0], /Job failed/);
+    // dev1 request 10536553: Drop and Recreate Index.
+    assert.deepStrictEqual(oscsMod.checkCounters(job, counters(100, 100, 0)), { issues: [], rows: 100 });
+    assert.match(oscsMod.checkCounters(job, counters(100, 90, 10)).issues[0], /10 of 100 items failed/);
+    assert.match(oscsMod.checkCounters(job, { requestParameters: [] }).issues[0], /didn't report progress counters/);
+    // Candidates (dev1 request 10536561): children do the work, so processed stays 0; Rows uses the total.
+    assert.deepStrictEqual(oscsMod.checkCounters({ counterCheck: { minTotal: 1, maxFailed: 0, rowsFrom: 'total' } }, counters(27343, 0, 0)), { issues: [], rows: 27343 });
+    // Geography only reports its count.
+    assert.deepStrictEqual(oscsMod.checkCounters({ counterCheck: {} }, counters(98072, 49053, 49019)), { issues: [], rows: 49053 });
+  });
+
+  await check('OSCS: Slack turned off for a run posts nothing but still alerts in the app', async () => {
+    const oracle = fakeOracle({ logFor: j => (j.args[0] === 'fa-hcm-person'
+      ? 'Index fa-hcm-person\nTotal number of rows failed in the payload: 3' : goodLog(j)) });
+    const { alerts, last } = await runToEnd(testConfig([{ index: 'fa-hcm-person' }]), oracle, { mode: 'single', stepId: 'ingest:fa-hcm-person', slack: false });
+    assert.strictEqual(last.status, 'stopped');
+    assert.ok(!oracle.submitted.some(s => s.slack));
+    assert.strictEqual(alerts.at(-1).slack, 'off for this run');
+    assert.strictEqual(last.alerts.at(-1).slack, 'off for this run');
+  });
+
   await check('OSCS: a failed-rows log stops the run before the next step and alerts Slack', async () => {
     const steps = [{ index: 'fa-hcm-acl' }, { index: 'fa-hcm-person' }, { index: 'fa-hcm-job' }];
     const oracle = fakeOracle({ logFor: j => (j.args[0] === 'fa-hcm-person'
       ? 'Index fa-hcm-person\nTotal number of rows failed in the payload: 3' : goodLog(j)) });
     const { last } = await runToEnd(testConfig(steps), oracle, {});
     assert.strictEqual(last.status, 'stopped');
-    assert.deepStrictEqual(last.steps.map(s => s.status), ['SUCCEEDED', 'WARNING', 'PENDING', 'PENDING', 'PENDING']);
+    assert.deepStrictEqual(last.steps.map(s => s.status), ['SUCCEEDED', 'WARNING', 'PENDING', 'PENDING', 'PENDING', 'PENDING', 'PENDING', 'PENDING']);
     assert.ok(!oracle.submitted.some(s => s.args === 'fa-hcm-job,false'));
     assert.ok(oracle.submitted.at(-1).slack.includes('fa-hcm-person'));
   });

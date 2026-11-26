@@ -177,9 +177,10 @@ Used only by `oscs-reindex.js`. Each job in the config picks one with `"api"`.
 
 **ESS scheduler (`"ess"`)**: `{baseUrl}/ess/rest/scheduler/v1/requests`
 - Submit: `POST { jobDefinitionId: "JobDefinition://oracle/apps/.../JobName", application, requestParameters: [{ name: "submit.argument1", paramType: "STRING", value }] }` → `requestId` (falls back to `id` or the `Location` header)
+- Search: `GET /requests?q=...&fields=...&limit=&offset=` (`searchRequests`). Filter support isn't documented for our release, so `findRequests` tries a job filter, then a date-only filter, and always re-filters by job name and submitter itself. It returns its notes, which the UI shows under "How the app searched". Check index list (`checkIndexList`) reads the newest non-canceled FndOSCSReindexJob log that has an `Indices (created): [...]` line and compares it with `steps` and `exclusions` in the config. Both are read-only and allowed on Prod.
 - Status/details: `GET /requests/{id}` → `state` (name or numeric ESS state code; `normalizeStatus()` maps both) and `requestParameters`. The Inspect tool uses this to read parameter values from past requests.
 
-**Guardrails are enforced in the main process, not just the UI:** the host must match `nonProdHostPattern` and not be in `prodHosts`; the typed confirmation must equal the instance name from the host; ingest steps with a blank or invalid index name are never submitted; a full run refuses to start unless every job (including both ACL jobs) is complete in the config; ACL jobs run only after every ingest step in the run succeeded.
+**Guardrails are enforced in the main process, not just the UI:** the host must match `nonProdHostPattern` and not be in `prodHosts`; the typed confirmation must equal the instance name from the host; ingest steps with a blank or invalid index name are never submitted; a full run refuses to start unless every job in `aclSteps` is complete in the config; those jobs (Compute Users ACL, Learning ACL, then the three Recruiting Load and Index jobs) run only after every ingest step in the run succeeded. Jobs with `counterCheck` are checked against Oracle's `FA_EMCC_counter_1_*` request parameters after they succeed (`checkCounters`), because Recruiting's Upgrade Current Index mode reports Succeeded while doing nothing.
 
 Run records: `userData/oscs-runs/<runId>.json`, rewritten after every change. Slack webhook: encrypted with `safeStorage` (async API) in `userData/oscs-slack-webhook.bin`, never in settings.json.
 
@@ -466,4 +467,4 @@ SmartScreen shows an "unknown publisher" warning on install; users click More in
 - Modes: full run, test one step, resume a stopped run (uses the current config's step list matched by step ID; skips steps that already succeeded in that run).
 - Stops on any non-SUCCEEDED status or failed log check (section 7a of the spec), retries "index is being used by other job(s)" 3 times 5 minutes apart, alerts in-app and to Slack.
 - "Stop after current step" never cancels the Oracle job; it stops submitting more. Closing the window during a run asks first.
-- IPC channels: `oscs:config`, `oscs:start`, `oscs:stop`, `oscs:listRuns`, `oscs:inspect`, `oscs:openConfig`, `oscs:openRunsFolder`, `oscs:setSlackWebhook`, `oscs:testSlack`; progress pushed on `oscs:progress`.
+- IPC channels: `oscs:config`, `oscs:start`, `oscs:stop`, `oscs:listRuns`, `oscs:inspect`, `oscs:findRequests`, `oscs:checkIndexList`, `oscs:openConfig`, `oscs:openRunsFolder`, `oscs:setSlackWebhook`, `oscs:testSlack`; progress pushed on `oscs:progress`.
