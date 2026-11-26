@@ -403,9 +403,9 @@ UI PATTERNS
 
 DEPENDENCIES
 ------------
-  read-excel-file ^9.3.12     — in-memory Excel parsing, no temp files needed
+  read-excel-file ^9.3.20     — in-memory Excel parsing, no temp files needed
   electron-updater ^6.8.11    — auto-update support (runtime dependency)
-  electron ^45.0.0            — desktop framework (devDependency)
+  electron ^45.4.1            — desktop framework (devDependency)
   electron-builder ^26.18.0   — packaging (devDependency)
 
 fs and path are Node built-ins.

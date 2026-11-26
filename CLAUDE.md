@@ -308,8 +308,8 @@ Every app file the app loads at runtime must be listed — forgetting `renderer.
 
 | Package | Version | Purpose |
 |---------|---------|---------|
-| `read-excel-file` | `^9.3.12` | In-memory Excel parsing of SOAP report output, no temp files needed |
-| `electron` | `^45.0.0` | Desktop app framework (devDependency) |
+| `read-excel-file` | `^9.3.20` | In-memory Excel parsing of SOAP report output, no temp files needed |
+| `electron` | `^45.4.1` | Desktop app framework (devDependency) |
 | `electron-builder` | `^26.18.0` | Packaging (devDependency) |
 | `electron-updater` | `^6.8.11` | Auto-update support (runtime dependency) |
 
